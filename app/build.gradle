@@ -27,10 +27,14 @@ android {
         targetCompatibility JavaVersion.VERSION_11
     }
     buildToolsVersion '35.0.0'
+
+    // Add this to prevent compression of .tflite files
+    aaptOptions {
+        noCompress "tflite"
+    }
 }
 
 dependencies {
-
     implementation libs.appcompat
     implementation libs.material
     implementation libs.activity
@@ -48,4 +52,6 @@ dependencies {
     // Add TensorFlow Lite dependencies
     implementation libs.tensorflow.lite
     implementation libs.tensorflow.lite.support
+    implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
+    implementation 'org.tensorflow:tensorflow-lite-metadata:0.4.4'
 }

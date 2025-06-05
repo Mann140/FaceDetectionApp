@@ -18,16 +18,19 @@ import org.tensorflow.lite.support.common.FileUtil;
 import org.tensorflow.lite.support.image.ImageProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.image.ops.ResizeOp;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 public class AntiSpoofingDetector {
     private static final String TAG = "AntiSpoofingDetector";
-    private static final String MODEL_FILE = "anti_spoofing.tflite";
-    private static final int INPUT_SIZE = 224; // Adjust based on your model's input size
+    private static final String MODEL_FILE = "FaceAntiSpoofing.tflite"; // Updated model name
+    private static final int INPUT_SIZE = 224; // Standard input size for FaceAntiSpoofing model
     private static final int CHANNELS = 3; // RGB
+
+    // Normalization parameters for the model (typical ImageNet normalization)
+    private static final float[] MEAN = {0.485f, 0.456f, 0.406f};
+    private static final float[] STD = {0.229f, 0.224f, 0.225f};
 
     private Interpreter interpreter;
     private ImageProcessor imageProcessor;
@@ -38,9 +41,9 @@ public class AntiSpoofingDetector {
             loadModel(context);
             setupImageProcessor();
             isModelLoaded = true;
-            Log.d(TAG, "Anti-spoofing model loaded successfully");
+            Log.d(TAG, "FaceAntiSpoofing model loaded successfully");
         } catch (IOException e) {
-            Log.e(TAG, "Failed to load anti-spoofing model", e);
+            Log.e(TAG, "Failed to load FaceAntiSpoofing model", e);
             isModelLoaded = false;
         }
     }
@@ -80,24 +83,27 @@ public class AntiSpoofingDetector {
             tensorImage.load(faceBitmap);
             tensorImage = imageProcessor.process(tensorImage);
 
-            // Prepare output array
-            float[][] output = new float[1][2]; // Assuming binary classification [fake_prob, real_prob]
+            // Get the preprocessed image as ByteBuffer and apply manual normalization
+            ByteBuffer inputBuffer = normalizeImage(tensorImage.getBuffer());
+
+            // Prepare output array - FaceAntiSpoofing model typically outputs single value
+            float[][] output = new float[1][1]; // Single score output
 
             // Run inference
-            interpreter.run(tensorImage.getBuffer(), output);
+            interpreter.run(inputBuffer, output);
 
-            // Get probabilities
-            float fakeProb = output[0][0];
-            float realProb = output[0][1];
+            // Get the spoofing score (0 = real, 1 = fake)
+            float spoofScore = output[0][0];
 
-            // Calculate confidence and determine if real
-            boolean isReal = realProb > fakeProb;
-            float confidence = isReal ? realProb * 100f : fakeProb * 100f;
+            // Convert to probability and determine if real
+            // For FaceAntiSpoofing model: lower scores indicate real faces
+            boolean isReal = spoofScore < 0.5f; // Threshold can be adjusted
+            float confidence = isReal ? (1.0f - spoofScore) * 100f : spoofScore * 100f;
 
-            Log.d(TAG, String.format("Anti-spoofing results - Real: %.3f, Fake: %.3f, Confidence: %.1f%%",
-                    realProb, fakeProb, confidence));
+            Log.d(TAG, String.format("FaceAntiSpoofing results - Score: %.3f, IsReal: %s, Confidence: %.1f%%",
+                    spoofScore, isReal, confidence));
 
-            return new MainActivity.FaceData(faceRect, isReal, confidence, "TensorFlow Lite", false);
+            return new MainActivity.FaceData(faceRect, isReal, confidence, "FaceAntiSpoofing", false);
 
         } catch (Exception e) {
             Log.e(TAG, "Error during anti-spoofing detection", e);
@@ -120,7 +126,7 @@ public class AntiSpoofingDetector {
             }
 
             // Calculate face region with some padding
-            int padding = 20;
+            int padding = Math.max(20, Math.min(faceRect.width(), faceRect.height()) / 10);
             int left = Math.max(0, faceRect.left - padding);
             int top = Math.max(0, faceRect.top - padding);
             int right = Math.min(fullBitmap.getWidth(), faceRect.right + padding);
@@ -136,10 +142,15 @@ public class AntiSpoofingDetector {
             // Extract face region
             Bitmap faceBitmap = Bitmap.createBitmap(fullBitmap, left, top, width, height);
 
-            // Scale to model input size
-            Bitmap scaledFace = Bitmap.createScaledBitmap(faceBitmap, INPUT_SIZE, INPUT_SIZE, true);
+            // Make the face square by cropping to the smaller dimension
+            int size = Math.min(width, height);
+            int xOffset = (width - size) / 2;
+            int yOffset = (height - size) / 2;
 
-            return scaledFace;
+            Bitmap squareFace = Bitmap.createBitmap(faceBitmap, xOffset, yOffset, size, size);
+
+            // The ImageProcessor will handle resizing to INPUT_SIZE
+            return squareFace;
 
         } catch (Exception e) {
             Log.e(TAG, "Error extracting face from image", e);
@@ -218,6 +229,34 @@ public class AntiSpoofingDetector {
                 rgb[yp] = 0xff000000 | ((r << 6) & 0xff0000) | ((g >> 2) & 0xff00) | ((b >> 10) & 0xff);
             }
         }
+    }
+
+    private ByteBuffer normalizeImage(ByteBuffer inputBuffer) {
+        // Create a new buffer for normalized data
+        ByteBuffer normalizedBuffer = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * CHANNELS * 4);
+        normalizedBuffer.order(ByteOrder.nativeOrder());
+
+        inputBuffer.rewind();
+
+        // Convert from uint8 to float and normalize
+        while (inputBuffer.hasRemaining()) {
+            // Read RGB values (0-255)
+            int r = inputBuffer.get() & 0xFF;
+            int g = inputBuffer.get() & 0xFF;
+            int b = inputBuffer.get() & 0xFF;
+
+            // Normalize to [0,1] then apply ImageNet normalization
+            float normalizedR = (r / 255.0f - MEAN[0]) / STD[0];
+            float normalizedG = (g / 255.0f - MEAN[1]) / STD[1];
+            float normalizedB = (b / 255.0f - MEAN[2]) / STD[2];
+
+            normalizedBuffer.putFloat(normalizedR);
+            normalizedBuffer.putFloat(normalizedG);
+            normalizedBuffer.putFloat(normalizedB);
+        }
+
+        normalizedBuffer.rewind();
+        return normalizedBuffer;
     }
 
     public void close() {
