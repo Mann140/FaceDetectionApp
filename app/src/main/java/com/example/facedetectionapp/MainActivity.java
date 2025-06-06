@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 
+
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
     private TextView faceCountText;
