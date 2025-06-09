@@ -101,57 +101,78 @@ public class AntiSpoofingDetector {
         sb.append("]");
         Log.e(TAG, sb.toString());
 
-        // Calculate sums and counts
+        // Key insight: analyze UNIFORMITY in second half (indices 4-7)
         float firstHalf = outputs[0] + outputs[1] + outputs[2] + outputs[3];
         float secondHalf = outputs[4] + outputs[5] + outputs[6] + outputs[7];
 
-        int highCount50 = 0; // Count > 0.5
-        int highCount80 = 0; // Count > 0.8
-        int highCount95 = 0; // Count > 0.95
+        // Check uniformity in second half (fake images have very uniform high values)
+        float secondHalfMin = Math.min(Math.min(outputs[4], outputs[5]), Math.min(outputs[6], outputs[7]));
+        float secondHalfMax = Math.max(Math.max(outputs[4], outputs[5]), Math.max(outputs[6], outputs[7]));
+        float secondHalfRange = secondHalfMax - secondHalfMin;
 
-        for (int i = 0; i < 8; i++) {
-            if (outputs[i] > 0.5f) highCount50++;
-            if (outputs[i] > 0.8f) highCount80++;
-            if (outputs[i] > 0.95f) highCount95++;
+        // Count high values in second half specifically
+        int secondHalfVeryHigh = 0; // Count >0.97 in second half
+        for (int i = 4; i < 8; i++) {
+            if (outputs[i] > 0.97f) secondHalfVeryHigh++;
         }
 
-        Log.e(TAG, String.format("📊 Sums: first4=%.3f, second4=%.3f", firstHalf, secondHalf));
-        Log.e(TAG, String.format("📊 Counts: >0.5=%d, >0.8=%d, >0.95=%d", highCount50, highCount80, highCount95));
+        // General counts
+        int negativeCount = 0;
+        int highCount80 = 0;
+        for (int i = 0; i < 8; i++) {
+            if (outputs[i] < 0.0f) negativeCount++;
+            if (outputs[i] > 0.8f) highCount80++;
+        }
 
-        // INVERTED LOGIC - what was "fake" is now "real" and vice versa
+        Log.e(TAG, String.format("📊 Analysis: sum=%.3f, 2ndRange=%.3f, 2ndVeryHigh=%d",
+                firstHalf + secondHalf, secondHalfRange, secondHalfVeryHigh));
+        Log.e(TAG, String.format("📊 SecondHalf: min=%.3f, max=%.3f, neg=%d",
+                secondHalfMin, secondHalfMax, negativeCount));
+
         boolean isReal;
         String method;
         float confidence;
 
-        // Pattern 1: Strong FAKE indicator - many high values AND both halves high
-        if (highCount80 >= 6 && firstHalf > 3.0f && secondHalf > 3.0f) {
-            isReal = false; // INVERTED: was true, now false
-            method = "StrongFake-" + highCount80;
+        // KEY PATTERN: Fake images have uniform very high values in second half
+        if (secondHalfVeryHigh >= 3 && secondHalfRange < 0.05f && secondHalfMin > 0.97f) {
+            isReal = false;
+            method = "UniformSecondHalf-Fake";
             confidence = 95f;
         }
-        // Pattern 2: Moderate FAKE indicator - decent number of high values with good sums
-        else if (highCount50 >= 6 && (firstHalf > 3.5f || secondHalf > 3.0f)) {
-            isReal = false; // INVERTED: was true, now false
-            method = "ModerateFake-" + highCount50;
+        // Another fake pattern: Most of second half very high with small range
+        else if (secondHalfVeryHigh >= 4 && secondHalfRange < 0.1f) {
+            isReal = false;
+            method = "MostlyUniform-Fake";
+            confidence = 90f;
+        }
+        // Real pattern: Has negatives and more variation
+        else if (negativeCount >= 2 && secondHalfRange > 0.1f) {
+            isReal = true;
+            method = "MixedWithNeg-Real";
             confidence = 85f;
         }
-        // Pattern 3: Weak FAKE indicator - some high values but check for balance
-        else if (highCount50 >= 4 && firstHalf > 2.0f && secondHalf > 2.0f) {
-            isReal = false; // INVERTED: was true, now false
-            method = "WeakFake-" + highCount50;
-            confidence = 75f;
-        }
-        // Pattern 4: Very specific FAKE pattern - high first element and good coverage
-        else if (outputs[0] > 0.8f && highCount50 >= 4) {
-            isReal = false; // INVERTED: was true, now false
-            method = "SpecificFake";
+        // Real pattern: Second half has good variation (not uniform)
+        else if (secondHalfRange > 0.2f && secondHalfVeryHigh <= 2) {
+            isReal = true;
+            method = "VariedSecond-Real";
             confidence = 80f;
         }
-        // Everything else is REAL (low values, poor coverage = real faces)
-        else {
-            isReal = true; // INVERTED: was false, now true
-            method = "Default-Real";
+        // Low total sum usually real
+        else if (firstHalf + secondHalf < 3.0f) {
+            isReal = true;
+            method = "LowSum-Real";
             confidence = 75f;
+        }
+        // Default: if second half is too uniform, it's fake
+        else if (secondHalfRange < 0.1f && secondHalfMin > 0.8f) {
+            isReal = false;
+            method = "Default-Uniform-Fake";
+            confidence = 70f;
+        }
+        else {
+            isReal = true;
+            method = "Default-Real";
+            confidence = 65f;
         }
 
         Log.e(TAG, String.format("🎯 Decision: %s (confidence=%.1f%%, method=%s)",
