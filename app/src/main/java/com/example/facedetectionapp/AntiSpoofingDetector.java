@@ -101,77 +101,85 @@ public class AntiSpoofingDetector {
         sb.append("]");
         Log.e(TAG, sb.toString());
 
-        // Key insight: analyze UNIFORMITY in second half (indices 4-7)
+        // Comprehensive pattern analysis
         float firstHalf = outputs[0] + outputs[1] + outputs[2] + outputs[3];
         float secondHalf = outputs[4] + outputs[5] + outputs[6] + outputs[7];
+        float totalSum = firstHalf + secondHalf;
 
-        // Check uniformity in second half (fake images have very uniform high values)
-        float secondHalfMin = Math.min(Math.min(outputs[4], outputs[5]), Math.min(outputs[6], outputs[7]));
-        float secondHalfMax = Math.max(Math.max(outputs[4], outputs[5]), Math.max(outputs[6], outputs[7]));
-        float secondHalfRange = secondHalfMax - secondHalfMin;
-
-        // Count high values in second half specifically
-        int secondHalfVeryHigh = 0; // Count >0.97 in second half
-        for (int i = 4; i < 8; i++) {
-            if (outputs[i] > 0.97f) secondHalfVeryHigh++;
-        }
-
-        // General counts
+        // Calculate overall range and statistics
+        float minValue = Float.MAX_VALUE, maxValue = Float.MIN_VALUE;
+        int veryHighCount = 0; // Count >0.9
+        int moderateCount = 0; // Count 0.1-0.9
+        int veryLowCount = 0;  // Count <0.1
         int negativeCount = 0;
-        int highCount80 = 0;
+
         for (int i = 0; i < 8; i++) {
-            if (outputs[i] < 0.0f) negativeCount++;
-            if (outputs[i] > 0.8f) highCount80++;
+            minValue = Math.min(minValue, outputs[i]);
+            maxValue = Math.max(maxValue, outputs[i]);
+
+            if (outputs[i] > 0.9f) veryHighCount++;
+            else if (outputs[i] > 0.1f) moderateCount++;
+            else if (outputs[i] >= 0.0f) veryLowCount++;
+            else negativeCount++;
         }
 
-        Log.e(TAG, String.format("📊 Analysis: sum=%.3f, 2ndRange=%.3f, 2ndVeryHigh=%d",
-                firstHalf + secondHalf, secondHalfRange, secondHalfVeryHigh));
-        Log.e(TAG, String.format("📊 SecondHalf: min=%.3f, max=%.3f, neg=%d",
-                secondHalfMin, secondHalfMax, negativeCount));
+        float overallRange = maxValue - minValue;
+
+        Log.e(TAG, String.format("📊 Analysis: sum=%.3f, range=%.3f, min=%.3f, max=%.3f",
+                totalSum, overallRange, minValue, maxValue));
+        Log.e(TAG, String.format("📊 Counts: veryHigh=%d, moderate=%d, veryLow=%d, neg=%d",
+                veryHighCount, moderateCount, veryLowCount, negativeCount));
 
         boolean isReal;
         String method;
         float confidence;
 
-        // KEY PATTERN: Fake images have uniform very high values in second half
-        if (secondHalfVeryHigh >= 3 && secondHalfRange < 0.05f && secondHalfMin > 0.97f) {
-            isReal = false;
-            method = "UniformSecondHalf-Fake";
+        // REAL PATTERN: All values very close to 1.0 (uniform high with small range)
+        if (veryHighCount >= 7 && overallRange < 0.15f && totalSum > 7.0f) {
+            isReal = true;
+            method = "UniformHigh-Real";
             confidence = 95f;
         }
-        // Another fake pattern: Most of second half very high with small range
-        else if (secondHalfVeryHigh >= 4 && secondHalfRange < 0.1f) {
-            isReal = false;
-            method = "MostlyUniform-Fake";
+        // REAL PATTERN (variant): Most values high with reasonable range
+        else if (veryHighCount >= 6 && overallRange < 0.2f && totalSum > 6.5f && minValue > 0.85f) {
+            isReal = true;
+            method = "MostlyHigh-Real";
             confidence = 90f;
         }
-        // Real pattern: Has negatives and more variation
-        else if (negativeCount >= 2 && secondHalfRange > 0.1f) {
-            isReal = true;
-            method = "MixedWithNeg-Real";
+        // FAKE PATTERN TYPE A: Mixed low first half, very high second half
+        else if (firstHalf < 2.0f && secondHalf > 3.5f && veryHighCount >= 3 && veryHighCount <= 5) {
+            isReal = false;
+            method = "TypeA-Mixed-Fake";
+            confidence = 90f;
+        }
+        // FAKE PATTERN TYPE B: All very low values
+        else if (veryLowCount >= 5 || (negativeCount >= 3 && Math.abs(totalSum) < 1.0f)) {
+            isReal = false;
+            method = "TypeB-AllLow-Fake";
             confidence = 85f;
         }
-        // Real pattern: Second half has good variation (not uniform)
-        else if (secondHalfRange > 0.2f && secondHalfVeryHigh <= 2) {
-            isReal = true;
-            method = "VariedSecond-Real";
+        // FAKE PATTERN TYPE B (variant): Mostly low with many negatives
+        else if (totalSum < 1.5f && (negativeCount >= 2 || veryLowCount >= 4)) {
+            isReal = false;
+            method = "TypeB-MostlyLow-Fake";
             confidence = 80f;
         }
-        // Low total sum usually real
-        else if (firstHalf + secondHalf < 3.0f) {
-            isReal = true;
-            method = "LowSum-Real";
+        // FAKE PATTERN: Very large range (inconsistent values)
+        else if (overallRange > 1.0f && veryHighCount <= 4) {
+            isReal = false;
+            method = "HighRange-Fake";
             confidence = 75f;
         }
-        // Default: if second half is too uniform, it's fake
-        else if (secondHalfRange < 0.1f && secondHalfMin > 0.8f) {
-            isReal = false;
-            method = "Default-Uniform-Fake";
+        // Default: moderate values are more likely real
+        else if (totalSum > 3.0f && totalSum < 7.0f && moderateCount >= 2) {
+            isReal = true;
+            method = "Moderate-Real";
             confidence = 70f;
         }
         else {
-            isReal = true;
-            method = "Default-Real";
+            // Default to fake for unclear patterns
+            isReal = false;
+            method = "Default-Fake";
             confidence = 65f;
         }
 
