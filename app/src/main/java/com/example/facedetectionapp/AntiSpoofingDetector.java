@@ -30,7 +30,7 @@ public class AntiSpoofingDetector {
     private boolean isModelLoaded = false;
 
     public AntiSpoofingDetector(Context context) {
-        Log.e(TAG, "🚀 FINAL WORKING AntiSpoofingDetector - Based on YOUR data analysis!");
+        Log.e(TAG, "🚀 FIXED AntiSpoofingDetector - Corrected Real/Fake Logic!");
 
         try {
             loadModel(context);
@@ -77,10 +77,10 @@ public class AntiSpoofingDetector {
             ByteBuffer inputBuffer = preprocessForMobileFaceNet(resizedBitmap);
             float[] outputs = runInference(inputBuffer);
 
-            // Use the CORRECT interpretation based on your data
+            // Use the CORRECTED interpretation - Real/Fake logic fixed
             AnalysisResult result = interpretOutputsCorrectly(outputs);
 
-            Log.e(TAG, String.format("🎯 FINAL Result - IsReal: %s, Confidence: %.1f%% (Method: %s)",
+            Log.e(TAG, String.format("🎯 CORRECTED Result - IsReal: %s, Confidence: %.1f%% (Method: %s)",
                     result.isReal, result.confidence, result.method));
 
             return new MainActivity.FaceData(faceRect, result.isReal, result.confidence, result.method, false);
@@ -101,92 +101,181 @@ public class AntiSpoofingDetector {
         sb.append("]");
         Log.e(TAG, sb.toString());
 
-        // Comprehensive pattern analysis
+        // Enhanced pattern analysis with more granular thresholds
         float firstHalf = outputs[0] + outputs[1] + outputs[2] + outputs[3];
         float secondHalf = outputs[4] + outputs[5] + outputs[6] + outputs[7];
         float totalSum = firstHalf + secondHalf;
+        float average = totalSum / 8.0f;
 
-        // Calculate overall range and statistics
+        // Calculate statistics with refined thresholds
         float minValue = Float.MAX_VALUE, maxValue = Float.MIN_VALUE;
-        int veryHighCount = 0; // Count >0.9
-        int moderateCount = 0; // Count 0.1-0.9
-        int veryLowCount = 0;  // Count <0.1
-        int negativeCount = 0;
+        int veryHighCount = 0;    // Count >0.8
+        int highCount = 0;        // Count 0.5-0.8
+        int moderateCount = 0;    // Count 0.1-0.5
+        int lowCount = 0;         // Count 0.0-0.1
+        int negativeCount = 0;    // Count <0.0
 
         for (int i = 0; i < 8; i++) {
             minValue = Math.min(minValue, outputs[i]);
             maxValue = Math.max(maxValue, outputs[i]);
 
-            if (outputs[i] > 0.9f) veryHighCount++;
+            if (outputs[i] > 0.8f) veryHighCount++;
+            else if (outputs[i] > 0.5f) highCount++;
             else if (outputs[i] > 0.1f) moderateCount++;
-            else if (outputs[i] >= 0.0f) veryLowCount++;
+            else if (outputs[i] >= 0.0f) lowCount++;
             else negativeCount++;
         }
 
         float overallRange = maxValue - minValue;
+        float standardDeviation = calculateStandardDeviation(outputs, average);
 
-        Log.e(TAG, String.format("📊 Analysis: sum=%.3f, range=%.3f, min=%.3f, max=%.3f",
-                totalSum, overallRange, minValue, maxValue));
-        Log.e(TAG, String.format("📊 Counts: veryHigh=%d, moderate=%d, veryLow=%d, neg=%d",
-                veryHighCount, moderateCount, veryLowCount, negativeCount));
+        Log.e(TAG, String.format("📊 Enhanced Analysis: sum=%.3f, avg=%.3f, range=%.3f, std=%.3f",
+                totalSum, average, overallRange, standardDeviation));
+        Log.e(TAG, String.format("📊 Refined Counts: veryHigh=%d, high=%d, moderate=%d, low=%d, neg=%d",
+                veryHighCount, highCount, moderateCount, lowCount, negativeCount));
+
+        // Score-based approach with stronger fake detection for images
+        float realScore = 0f;
+        float fakeScore = 0f;
+        String method = "";
+
+        // Factor 1: Overall level analysis (images tend to have higher averages)
+        if (average > 0.9f) {
+            fakeScore += 4f; // Very high average strongly suggests fake (image)
+            method += "VeryHighAvg ";
+        } else if (average > 0.75f) {
+            fakeScore += 2.5f; // High average suggests fake (image)
+            method += "HighAvg ";
+        } else if (average > 0.5f) {
+            fakeScore += 1f; // Moderately high average slightly suggests fake
+            method += "ModAvg ";
+        } else if (average > 0.2f) {
+            realScore += 1.5f; // Moderate average suggests real
+            method += "MidAvg ";
+        } else {
+            realScore += 3f; // Low average strongly suggests real
+            method += "LowAvg ";
+        }
+
+        // Factor 2: Consistency analysis (images tend to be more uniform)
+        if (standardDeviation < 0.03f) {
+            fakeScore += 3f; // Very uniform strongly suggests fake (image)
+            method += "VeryUniform ";
+        } else if (standardDeviation < 0.08f) {
+            fakeScore += 2f; // Somewhat uniform suggests fake (image)
+            method += "Uniform ";
+        } else if (standardDeviation < 0.2f) {
+            fakeScore += 0.5f; // Slightly uniform leans fake
+            method += "SlightUniform ";
+        } else if (standardDeviation > 0.5f) {
+            realScore += 3f; // High variation strongly suggests real
+            method += "HighVar ";
+        } else {
+            realScore += 1.5f; // Moderate variation suggests real
+            method += "ModVar ";
+        }
+
+        // Factor 3: Distribution analysis (images show specific patterns)
+        if (veryHighCount >= 7) {
+            fakeScore += 3f; // Almost all high values strongly suggest fake (image)
+            method += "AlmostAllHigh ";
+        } else if (veryHighCount >= 5) {
+            fakeScore += 2f; // Many very high values suggest fake (image)
+            method += "ManyHigh ";
+        } else if (veryHighCount >= 3) {
+            fakeScore += 1f; // Some very high values suggest fake
+            method += "SomeHigh ";
+        }
+
+        if (negativeCount >= 4 || lowCount >= 5) {
+            realScore += 3f; // Many low/negative values strongly suggest real
+            method += "ManyLow ";
+        } else if (negativeCount >= 2 || lowCount >= 3) {
+            realScore += 2f; // Some low/negative values suggest real
+            method += "SomeLow ";
+        } else if (negativeCount >= 1 || lowCount >= 1) {
+            realScore += 1f; // Few low/negative values suggest real
+            method += "FewLow ";
+        }
+
+        // Factor 4: Range analysis (images tend to have smaller ranges)
+        if (overallRange < 0.05f) {
+            fakeScore += 2.5f; // Very small range strongly suggests fake (image)
+            method += "VerySmallRange ";
+        } else if (overallRange < 0.15f) {
+            fakeScore += 1.5f; // Small range suggests fake (image)
+            method += "SmallRange ";
+        } else if (overallRange > 1.0f) {
+            realScore += 2f; // Large range suggests real
+            method += "LargeRange ";
+        } else if (overallRange > 0.5f) {
+            realScore += 1f; // Medium range suggests real
+            method += "MediumRange ";
+        }
+
+        // Factor 5: Pattern analysis
+        float halfDifference = Math.abs(firstHalf - secondHalf);
+        if (halfDifference > 2.5f) {
+            realScore += 2f; // Very asymmetric halves suggest real
+            method += "VeryAsymmetric ";
+        } else if (halfDifference > 1.0f) {
+            realScore += 1f; // Asymmetric halves suggest real
+            method += "Asymmetric ";
+        } else if (halfDifference < 0.2f) {
+            fakeScore += 1f; // Very symmetric suggests fake (image)
+            method += "VerySymmetric ";
+        }
+
+        // Factor 6: Special image detection patterns
+        // Images often have all values in a narrow high band
+        if (veryHighCount + highCount >= 6 && overallRange < 0.2f && average > 0.7f) {
+            fakeScore += 2.5f; // Classic image pattern
+            method += "ImagePattern ";
+        }
+
+        // Real faces often have some variation and lower values
+        if ((negativeCount + lowCount >= 2) && standardDeviation > 0.1f) {
+            realScore += 1.5f; // Real face variation pattern
+            method += "RealPattern ";
+        }
+
+        // Decision making with adjusted thresholds for better fake detection
+        float totalScore = realScore + fakeScore;
+        float fakePercentage = totalScore > 0 ? (fakeScore / totalScore) * 100f : 50f;
 
         boolean isReal;
-        String method;
         float confidence;
 
-        // REAL PATTERN: All values very close to 1.0 (uniform high with small range)
-        if (veryHighCount >= 7 && overallRange < 0.15f && totalSum > 7.0f) {
-            isReal = true;
-            method = "UniformHigh-Real";
-            confidence = 95f;
-        }
-        // REAL PATTERN (variant): Most values high with reasonable range
-        else if (veryHighCount >= 6 && overallRange < 0.2f && totalSum > 6.5f && minValue > 0.85f) {
-            isReal = true;
-            method = "MostlyHigh-Real";
-            confidence = 90f;
-        }
-        // FAKE PATTERN TYPE A: Mixed low first half, very high second half
-        else if (firstHalf < 2.0f && secondHalf > 3.5f && veryHighCount >= 3 && veryHighCount <= 5) {
+        // Adjusted thresholds - more sensitive to fake detection
+        if (fakePercentage >= 60f) {
+            isReal = false; // Fake
+            confidence = Math.min(95f, 65f + (fakePercentage - 60f) * 0.8f);
+            method = "Fake-" + method.trim();
+        } else if (fakePercentage <= 40f) {
+            isReal = true; // Real
+            confidence = Math.min(95f, 65f + (60f - fakePercentage) * 0.8f);
+            method = "Real-" + method.trim();
+        } else {
+            // Uncertain zone - lean towards fake for images (opposite of before)
             isReal = false;
-            method = "TypeA-Mixed-Fake";
-            confidence = 90f;
-        }
-        // FAKE PATTERN TYPE B: All very low values
-        else if (veryLowCount >= 5 || (negativeCount >= 3 && Math.abs(totalSum) < 1.0f)) {
-            isReal = false;
-            method = "TypeB-AllLow-Fake";
-            confidence = 85f;
-        }
-        // FAKE PATTERN TYPE B (variant): Mostly low with many negatives
-        else if (totalSum < 1.5f && (negativeCount >= 2 || veryLowCount >= 4)) {
-            isReal = false;
-            method = "TypeB-MostlyLow-Fake";
-            confidence = 80f;
-        }
-        // FAKE PATTERN: Very large range (inconsistent values)
-        else if (overallRange > 1.0f && veryHighCount <= 4) {
-            isReal = false;
-            method = "HighRange-Fake";
-            confidence = 75f;
-        }
-        // Default: moderate values are more likely real
-        else if (totalSum > 3.0f && totalSum < 7.0f && moderateCount >= 2) {
-            isReal = true;
-            method = "Moderate-Real";
-            confidence = 70f;
-        }
-        else {
-            // Default to fake for unclear patterns
-            isReal = false;
-            method = "Default-Fake";
-            confidence = 65f;
+            confidence = 50f + Math.abs(fakePercentage - 50f) * 0.4f;
+            method = "Uncertain-Fake-" + method.trim();
         }
 
-        Log.e(TAG, String.format("🎯 Decision: %s (confidence=%.1f%%, method=%s)",
-                isReal ? "REAL" : "FAKE", confidence, method));
+        Log.e(TAG, String.format("🎯 IMAGE-AWARE Decision: %s (realScore=%.1f, fakeScore=%.1f, fakePct=%.1f%%, confidence=%.1f%%)",
+                isReal ? "REAL" : "FAKE", realScore, fakeScore, fakePercentage, confidence));
+        Log.e(TAG, String.format("🔍 Method: %s", method));
 
         return new AnalysisResult(isReal, confidence, method);
+    }
+
+    private float calculateStandardDeviation(float[] values, float mean) {
+        float sumSquaredDiffs = 0f;
+        for (float value : values) {
+            float diff = value - mean;
+            sumSquaredDiffs += diff * diff;
+        }
+        return (float) Math.sqrt(sumSquaredDiffs / values.length);
     }
 
     private ByteBuffer preprocessForMobileFaceNet(Bitmap bitmap) {
