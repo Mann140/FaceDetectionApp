@@ -3,319 +3,408 @@ package com.example.facedetectionapp;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.LinearGradient;
 import android.graphics.Paint;
-import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.graphics.Shader;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.View;
+
+import androidx.annotation.Nullable;
+
+import com.google.mlkit.vision.face.Face;
+import com.google.mlkit.vision.face.FaceLandmark;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class FaceOverlayView extends View {
-    private final List<MainActivity.FaceData> faceDataList = new ArrayList<>();
-    private final Paint realFacePaint;
-    private final Paint fakeFacePaint;
-    private final Paint depthPaint;
-    private final Paint textPaint;
-    private final Paint badgePaint;
-    private final Paint confidencePaint;
-    private final Paint methodPaint;
-    private float scaleX = 1f;
-    private float scaleY = 1f;
 
-    public FaceOverlayView(Context context, AttributeSet attrs) {
+    private static final String TAG = "FaceOverlayView";
+
+    // Paint objects for different drawing elements
+    private Paint faceBoundingBoxPaint;
+    private Paint faceRealPaint;
+    private Paint faceFakePaint;
+    private Paint landmarkPaint;
+    private Paint textPaint;
+    private Paint textBackgroundPaint;
+
+    // Face data
+    private List<FaceOverlayData> faceOverlayDataList = new ArrayList<>();
+
+    // Scaling factors for coordinate transformation
+    private float scaleX = 1.0f;
+    private float scaleY = 1.0f;
+    private int previewWidth = 640;
+    private int previewHeight = 480;
+    private boolean isFrontCamera = true;
+
+    public FaceOverlayView(Context context) {
+        super(context);
+        init();
+    }
+
+    public FaceOverlayView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
+        init();
+    }
 
-        // Paint for real faces (gradient green)
-        realFacePaint = new Paint();
-        realFacePaint.setStyle(Paint.Style.STROKE);
-        realFacePaint.setStrokeWidth(6f);
-        realFacePaint.setAntiAlias(true);
+    public FaceOverlayView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
+        init();
+    }
 
-        // Paint for fake faces (red)
-        fakeFacePaint = new Paint();
-        fakeFacePaint.setStyle(Paint.Style.STROKE);
-        fakeFacePaint.setStrokeWidth(6f);
-        fakeFacePaint.setColor(0xFFFF4444);
-        fakeFacePaint.setAntiAlias(true);
+    private void init() {
+        // Initialize paint objects
+        faceBoundingBoxPaint = new Paint();
+        faceBoundingBoxPaint.setStyle(Paint.Style.STROKE);
+        faceBoundingBoxPaint.setStrokeWidth(8f);
+        faceBoundingBoxPaint.setAntiAlias(true);
+        faceBoundingBoxPaint.setColor(Color.GREEN);
 
-        // Paint for depth indicator
-        depthPaint = new Paint();
-        depthPaint.setStyle(Paint.Style.FILL);
-        depthPaint.setAntiAlias(true);
+        faceRealPaint = new Paint();
+        faceRealPaint.setStyle(Paint.Style.STROKE);
+        faceRealPaint.setStrokeWidth(8f);
+        faceRealPaint.setAntiAlias(true);
+        faceRealPaint.setColor(Color.GREEN);
 
-        // Paint for text
+        faceFakePaint = new Paint();
+        faceFakePaint.setStyle(Paint.Style.STROKE);
+        faceFakePaint.setStrokeWidth(8f);
+        faceFakePaint.setAntiAlias(true);
+        faceFakePaint.setColor(Color.RED);
+
+        landmarkPaint = new Paint();
+        landmarkPaint.setStyle(Paint.Style.FILL);
+        landmarkPaint.setStrokeWidth(4f);
+        landmarkPaint.setAntiAlias(true);
+        landmarkPaint.setColor(Color.YELLOW);
+
         textPaint = new Paint();
-        textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(28f);
+        textPaint.setStyle(Paint.Style.FILL);
+        textPaint.setTextSize(40f);
         textPaint.setAntiAlias(true);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setShadowLayer(4f, 2f, 2f, Color.BLACK);
+        textPaint.setColor(Color.WHITE);
 
-        // Paint for badges
-        badgePaint = new Paint();
-        badgePaint.setAntiAlias(true);
+        textBackgroundPaint = new Paint();
+        textBackgroundPaint.setStyle(Paint.Style.FILL);
+        textBackgroundPaint.setColor(Color.BLACK);
+        textBackgroundPaint.setAlpha(180);
 
-        // Paint for confidence meter
-        confidencePaint = new Paint();
-        confidencePaint.setAntiAlias(true);
-
-        // Paint for detection method
-        methodPaint = new Paint();
-        methodPaint.setColor(Color.WHITE);
-        methodPaint.setTextSize(20f);
-        methodPaint.setAntiAlias(true);
-        methodPaint.setTextAlign(Paint.Align.CENTER);
-        methodPaint.setShadowLayer(2f, 1f, 1f, Color.BLACK);
+        Log.d(TAG, "✅ FaceOverlayView initialized");
     }
 
-    // Method for ML detection
-    public void setFacesWithML(List<MainActivity.FaceData> faceData, int imageWidth, int imageHeight) {
-        faceDataList.clear();
-        faceDataList.addAll(faceData);
+    /**
+     * Update face overlay data from ML Kit Face objects
+     */
+    public void updateFaces(List<Face> faces) {
+        faceOverlayDataList.clear();
 
-        // Calculate scale factors
-        scaleX = (float) getWidth() / imageHeight;
-        scaleY = (float) getHeight() / imageWidth;
+        for (Face face : faces) {
+            FaceOverlayData overlayData = new FaceOverlayData();
+            overlayData.boundingBox = face.getBoundingBox();
+            overlayData.trackingId = face.getTrackingId();
+            overlayData.headEulerAngleY = face.getHeadEulerAngleY();
+            overlayData.headEulerAngleZ = face.getHeadEulerAngleZ();
+            overlayData.smilingProbability = face.getSmilingProbability();
+            overlayData.leftEyeOpenProbability = face.getLeftEyeOpenProbability();
+            overlayData.rightEyeOpenProbability = face.getRightEyeOpenProbability();
+            overlayData.landmarks = face.getAllLandmarks();
 
-        invalidate();
+            // Default values for custom analysis
+            overlayData.isReal = true;
+            overlayData.confidence = 85.0f;
+            overlayData.label = "Face Detected";
+            overlayData.isRecognized = false;
+
+            faceOverlayDataList.add(overlayData);
+        }
+
+        invalidate(); // Trigger redraw
     }
 
-    // Method for depth detection (backward compatibility)
-    public void setFacesWithDepth(List<MainActivity.FaceData> faceData, int imageWidth, int imageHeight) {
-        setFacesWithML(faceData, imageWidth, imageHeight);
+    /**
+     * Update face overlay data from custom FaceData objects (from MainActivity)
+     */
+    public void updateFaceData(List<MainActivity.FaceData> faceDataList) {
+        faceOverlayDataList.clear();
+
+        for (MainActivity.FaceData faceData : faceDataList) {
+            FaceOverlayData overlayData = new FaceOverlayData();
+            overlayData.boundingBox = faceData.boundingBox;
+            overlayData.isReal = faceData.isReal;
+            overlayData.confidence = faceData.confidence;
+            overlayData.label = faceData.label;
+            overlayData.isRecognized = faceData.isRecognized;
+
+            // Default values for ML Kit properties
+            overlayData.trackingId = null;
+            overlayData.headEulerAngleY = 0.0f;
+            overlayData.headEulerAngleZ = 0.0f;
+            overlayData.smilingProbability = null;
+            overlayData.leftEyeOpenProbability = null;
+            overlayData.rightEyeOpenProbability = null;
+            overlayData.landmarks = new ArrayList<>();
+
+            faceOverlayDataList.add(overlayData);
+        }
+
+        invalidate(); // Trigger redraw
     }
 
-    // Method for basic auth (backward compatibility)
-    public void setFacesWithAuth(List<MainActivity.FaceData> faceData, int imageWidth, int imageHeight) {
-        setFacesWithML(faceData, imageWidth, imageHeight);
+    /**
+     * Set camera preview dimensions for coordinate scaling
+     */
+    public void setPreviewSize(int width, int height) {
+        this.previewWidth = width;
+        this.previewHeight = height;
+        updateScaleFactors();
+    }
+
+    /**
+     * Set whether using front camera (for mirroring)
+     */
+    public void setFrontCamera(boolean isFrontCamera) {
+        this.isFrontCamera = isFrontCamera;
+    }
+
+    /**
+     * Update scaling factors based on view and preview dimensions
+     */
+    private void updateScaleFactors() {
+        if (getWidth() > 0 && getHeight() > 0) {
+            scaleX = (float) getWidth() / previewWidth;
+            scaleY = (float) getHeight() / previewHeight;
+        }
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        updateScaleFactors();
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        for (MainActivity.FaceData faceData : faceDataList) {
-            Rect face = faceData.boundingBox;
+        if (faceOverlayDataList.isEmpty()) {
+            return;
+        }
 
-            // Transform coordinates
-            float left = face.left * scaleX - 20;
-            float top = face.top * scaleY - 20;
-            float right = face.right * scaleX + 20;
-            float bottom = face.bottom * scaleY + 20;
+        updateScaleFactors();
 
-            // Draw based on detection result
-            if (faceData.isReal) {
-                drawRealFace(canvas, left, top, right, bottom, faceData);
+        for (FaceOverlayData overlayData : faceOverlayDataList) {
+            drawFace(canvas, overlayData);
+        }
+    }
+
+    /**
+     * Draw a single face with all its elements
+     */
+    private void drawFace(Canvas canvas, FaceOverlayData overlayData) {
+        // Transform bounding box coordinates
+        RectF transformedRect = transformRect(overlayData.boundingBox);
+
+        // Choose paint based on face analysis
+        Paint paint = overlayData.isReal ? faceRealPaint : faceFakePaint;
+
+        // Set color based on recognition status
+        if (overlayData.isRecognized) {
+            paint.setColor(Color.GREEN);
+        } else if (overlayData.isReal) {
+            if (overlayData.label.contains("Unknown")) {
+                paint.setColor(Color.YELLOW);
             } else {
-                drawFakeFace(canvas, left, top, right, bottom, faceData);
+                paint.setColor(Color.CYAN);
+            }
+        } else {
+            paint.setColor(Color.RED);
+        }
+
+        // Draw bounding box
+        canvas.drawRect(transformedRect, paint);
+
+        // Draw landmarks if available
+        if (overlayData.landmarks != null && !overlayData.landmarks.isEmpty()) {
+            drawLandmarks(canvas, overlayData.landmarks);
+        }
+
+        // Draw face information text
+        drawFaceInfo(canvas, transformedRect, overlayData);
+
+        // Draw additional analysis info
+        drawAnalysisInfo(canvas, transformedRect, overlayData);
+    }
+
+    /**
+     * Transform rectangle coordinates for display
+     */
+    private RectF transformRect(Rect originalRect) {
+        RectF transformedRect = new RectF();
+
+        if (isFrontCamera) {
+            // Mirror for front camera
+            transformedRect.left = getWidth() - (originalRect.right * scaleX);
+            transformedRect.right = getWidth() - (originalRect.left * scaleX);
+        } else {
+            transformedRect.left = originalRect.left * scaleX;
+            transformedRect.right = originalRect.right * scaleX;
+        }
+
+        transformedRect.top = originalRect.top * scaleY;
+        transformedRect.bottom = originalRect.bottom * scaleY;
+
+        return transformedRect;
+    }
+
+    /**
+     * Draw face landmarks
+     */
+    private void drawLandmarks(Canvas canvas, List<FaceLandmark> landmarks) {
+        for (FaceLandmark landmark : landmarks) {
+            float x = landmark.getPosition().x * scaleX;
+            float y = landmark.getPosition().y * scaleY;
+
+            // Mirror x coordinate for front camera
+            if (isFrontCamera) {
+                x = getWidth() - x;
             }
 
-            // Draw confidence meter
-            drawConfidenceMeter(canvas, right + 10, top, faceData.confidence);
-
-            // Draw detection method
-            canvas.drawText(faceData.detectionMethod,
-                    (left + right) / 2, top - 10, methodPaint);
+            canvas.drawCircle(x, y, 6f, landmarkPaint);
         }
     }
 
-    private void drawRealFace(Canvas canvas, float left, float top, float right, float bottom,
-                              MainActivity.FaceData faceData) {
-        // Create gradient based on confidence
-        int startColor = Color.GREEN;
-        int endColor = Color.argb(255, 0, (int)(255 * faceData.confidence / 100f), 0);
+    /**
+     * Draw face information text
+     */
+    private void drawFaceInfo(Canvas canvas, RectF rect, FaceOverlayData overlayData) {
+        // Prepare label text
+        String label = overlayData.label;
+        if (overlayData.confidence > 0) {
+            label += " (" + String.format("%.1f", overlayData.confidence) + "%)";
+        }
 
-        LinearGradient gradient = new LinearGradient(
-                left, top, right, bottom,
-                new int[]{startColor, endColor},
-                null, Shader.TileMode.CLAMP
+        // Measure text for background
+        Rect textBounds = new Rect();
+        textPaint.getTextBounds(label, 0, label.length(), textBounds);
+
+        // Draw text background
+        RectF textBackground = new RectF(
+                rect.left - 10,
+                rect.top - textBounds.height() - 20,
+                rect.left + textBounds.width() + 20,
+                rect.top - 5
         );
-        realFacePaint.setShader(gradient);
+        canvas.drawRect(textBackground, textBackgroundPaint);
 
-        // Draw main frame
-        RectF rect = new RectF(left, top, right, bottom);
-        canvas.drawRoundRect(rect, 20f, 20f, realFacePaint);
-
-        // Draw "REAL" label with confidence
-        String label = String.format("REAL %.0f%%", faceData.confidence);
-        canvas.drawText(label, (left + right) / 2, bottom + 30, textPaint);
-
-        // Draw ML indicator
-        drawMLIndicator(canvas, left - 10, top - 10, true);
-
-        // Draw 3D effects if has depth info
-        if (faceData.has3DStructure) {
-            draw3DEffects(canvas, left, top, right, bottom);
-        }
+        // Draw text
+        canvas.drawText(label, rect.left, rect.top - 10, textPaint);
     }
 
-    private void drawFakeFace(Canvas canvas, float left, float top, float right, float bottom,
-                              MainActivity.FaceData faceData) {
-        // Draw with dashed line for fake
-        float[] intervals = {20f, 10f};
-        fakeFacePaint.setPathEffect(new android.graphics.DashPathEffect(intervals, 0));
+    /**
+     * Draw additional analysis information
+     */
+    private void drawAnalysisInfo(Canvas canvas, RectF rect, FaceOverlayData overlayData) {
+        List<String> infoLines = new ArrayList<>();
 
-        RectF rect = new RectF(left, top, right, bottom);
-        canvas.drawRoundRect(rect, 20f, 20f, fakeFacePaint);
-
-        // Draw "FAKE" label
-        String label = String.format("FAKE %.0f%%", 100 - faceData.confidence);
-        canvas.drawText(label, (left + right) / 2, bottom + 30, textPaint);
-
-        // Draw warning icon
-        drawWarningIcon(canvas, right - 30, top + 10);
-
-        // Draw ML indicator
-        drawMLIndicator(canvas, left - 10, top - 10, false);
-    }
-
-    private void drawConfidenceMeter(Canvas canvas, float x, float y, float confidence) {
-        float meterWidth = 10f;
-        float meterHeight = 100f;
-
-        // Background
-        Paint bgPaint = new Paint();
-        bgPaint.setColor(0x44FFFFFF);
-        bgPaint.setStyle(Paint.Style.FILL);
-        canvas.drawRect(x, y, x + meterWidth, y + meterHeight, bgPaint);
-
-        // Confidence level
-        float fillHeight = (confidence / 100f) * meterHeight;
-        int color = getConfidenceColor(confidence);
-        confidencePaint.setColor(color);
-        confidencePaint.setStyle(Paint.Style.FILL);
-
-        canvas.drawRect(x, y + meterHeight - fillHeight, x + meterWidth, y + meterHeight, confidencePaint);
-
-        // Border
-        Paint borderPaint = new Paint();
-        borderPaint.setColor(Color.WHITE);
-        borderPaint.setStyle(Paint.Style.STROKE);
-        borderPaint.setStrokeWidth(2f);
-        canvas.drawRect(x, y, x + meterWidth, y + meterHeight, borderPaint);
-    }
-
-    private int getConfidenceColor(float confidence) {
-        if (confidence > 80) {
-            return 0xFF00FF00; // Green
-        } else if (confidence > 60) {
-            return 0xFFFFFF00; // Yellow
-        } else if (confidence > 40) {
-            return 0xFFFF9900; // Orange
-        } else {
-            return 0xFFFF0000; // Red
-        }
-    }
-
-    private void drawMLIndicator(Canvas canvas, float x, float y, boolean isReal) {
-        Paint mlPaint = new Paint();
-        mlPaint.setAntiAlias(true);
-        mlPaint.setTextSize(16f);
-        mlPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-
-        if (isReal) {
-            mlPaint.setColor(0xFF00FF00);
-            canvas.drawText("ML✓", x, y, mlPaint);
-        } else {
-            mlPaint.setColor(0xFFFF0000);
-            canvas.drawText("ML✗", x, y, mlPaint);
-        }
-    }
-
-    private void drawWarningIcon(Canvas canvas, float x, float y) {
-        Paint warningPaint = new Paint();
-        warningPaint.setColor(0xFFFF9900);
-        warningPaint.setStyle(Paint.Style.FILL);
-        warningPaint.setAntiAlias(true);
-
-        // Draw triangle warning
-        Path path = new Path();
-        path.moveTo(x, y + 20);
-        path.lineTo(x - 15, y);
-        path.lineTo(x + 15, y);
-        path.close();
-
-        canvas.drawPath(path, warningPaint);
-
-        // Draw exclamation mark
-        Paint textPaint = new Paint();
-        textPaint.setColor(Color.BLACK);
-        textPaint.setTextSize(16f);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-
-        canvas.drawText("!", x, y + 15, textPaint);
-    }
-
-    // 3D effects from depth detection
-    private void draw3DEffects(Canvas canvas, float left, float top, float right, float bottom) {
-        // Draw subtle depth lines
-        Paint effectPaint = new Paint();
-        effectPaint.setStyle(Paint.Style.STROKE);
-        effectPaint.setStrokeWidth(2f);
-        effectPaint.setColor(0x4400FF00); // Semi-transparent green
-        effectPaint.setAntiAlias(true);
-
-        // Corner depth indicators
-        float cornerSize = 20f;
-
-        // Top-left corner
-        Path tlPath = new Path();
-        tlPath.moveTo(left, top + cornerSize);
-        tlPath.lineTo(left, top);
-        tlPath.lineTo(left + cornerSize, top);
-        canvas.drawPath(tlPath, effectPaint);
-
-        // Top-right corner
-        Path trPath = new Path();
-        trPath.moveTo(right - cornerSize, top);
-        trPath.lineTo(right, top);
-        trPath.lineTo(right, top + cornerSize);
-        canvas.drawPath(trPath, effectPaint);
-
-        // Bottom-left corner
-        Path blPath = new Path();
-        blPath.moveTo(left, bottom - cornerSize);
-        blPath.lineTo(left, bottom);
-        blPath.lineTo(left + cornerSize, bottom);
-        canvas.drawPath(blPath, effectPaint);
-
-        // Bottom-right corner
-        Path brPath = new Path();
-        brPath.moveTo(right - cornerSize, bottom);
-        brPath.lineTo(right, bottom);
-        brPath.lineTo(right, bottom - cornerSize);
-        canvas.drawPath(brPath, effectPaint);
-    }
-
-    // 3D badge from depth detection
-    private void draw3DBadge(Canvas canvas, float x, float y, String status, boolean is3D) {
-        // Badge background
-        badgePaint.setStyle(Paint.Style.FILL);
-        if (is3D) {
-            badgePaint.setColor(0xFF00AA00); // Green
-        } else if (status.contains("Partial")) {
-            badgePaint.setColor(0xFFFF9800); // Orange
-        } else {
-            badgePaint.setColor(0xFFFF4444); // Red
+        // Add tracking ID if available
+        if (overlayData.trackingId != null) {
+            infoLines.add("ID: " + overlayData.trackingId);
         }
 
-        // Draw circular badge
-        canvas.drawCircle(x, y + 15, 30, badgePaint);
+        // Add head rotation info
+        if (Math.abs(overlayData.headEulerAngleY) > 5 || Math.abs(overlayData.headEulerAngleZ) > 5) {
+            infoLines.add("Head: " + String.format("%.1f°, %.1f°",
+                    overlayData.headEulerAngleY, overlayData.headEulerAngleZ));
+        }
 
-        // Draw 3D icon
-        Paint iconPaint = new Paint();
-        iconPaint.setColor(Color.WHITE);
-        iconPaint.setTextSize(24f);
-        iconPaint.setTextAlign(Paint.Align.CENTER);
-        iconPaint.setAntiAlias(true);
-        iconPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        // Add expression info
+        if (overlayData.smilingProbability != null && overlayData.smilingProbability > 0.5f) {
+            infoLines.add("😊 Smiling: " + String.format("%.0f%%", overlayData.smilingProbability * 100));
+        }
 
-        canvas.drawText("3D", x, y + 22, iconPaint);
+        // Add eye state info
+        if (overlayData.leftEyeOpenProbability != null && overlayData.rightEyeOpenProbability != null) {
+            if (overlayData.leftEyeOpenProbability < 0.5f || overlayData.rightEyeOpenProbability < 0.5f) {
+                infoLines.add("😴 Eyes: " + String.format("L%.0f%% R%.0f%%",
+                        overlayData.leftEyeOpenProbability * 100, overlayData.rightEyeOpenProbability * 100));
+            }
+        }
+
+        // Draw info lines
+        float textY = rect.bottom + 30;
+        textPaint.setTextSize(30f);
+
+        for (String info : infoLines) {
+            // Measure text for background
+            Rect textBounds = new Rect();
+            textPaint.getTextBounds(info, 0, info.length(), textBounds);
+
+            // Draw text background
+            RectF textBackground = new RectF(
+                    rect.left - 5,
+                    textY - textBounds.height() - 5,
+                    rect.left + textBounds.width() + 10,
+                    textY + 5
+            );
+            canvas.drawRect(textBackground, textBackgroundPaint);
+
+            // Draw text
+            canvas.drawText(info, rect.left, textY, textPaint);
+            textY += textBounds.height() + 10;
+        }
+
+        textPaint.setTextSize(40f); // Reset text size
+    }
+
+    /**
+     * Clear all face overlays
+     */
+    public void clearFaces() {
+        faceOverlayDataList.clear();
+        invalidate();
+    }
+
+    /**
+     * Get number of faces currently being displayed
+     */
+    public int getFaceCount() {
+        return faceOverlayDataList.size();
+    }
+
+    // ===== FACE OVERLAY DATA CLASS =====
+
+    /**
+     * Internal class to hold all face overlay information
+     */
+    private static class FaceOverlayData {
+        // Basic face data
+        Rect boundingBox;
+        boolean isReal = true;
+        float confidence = 0.0f;
+        String label = "";
+        boolean isRecognized = false;
+
+        // ML Kit Face properties
+        Integer trackingId;
+        float headEulerAngleY = 0.0f;
+        float headEulerAngleZ = 0.0f;
+        Float smilingProbability;
+        Float leftEyeOpenProbability;
+        Float rightEyeOpenProbability;
+        List<FaceLandmark> landmarks = new ArrayList<>();
+
+        @Override
+        public String toString() {
+            return "FaceOverlayData{" +
+                    "isReal=" + isReal +
+                    ", confidence=" + confidence +
+                    ", label='" + label + '\'' +
+                    ", isRecognized=" + isRecognized +
+                    ", trackingId=" + trackingId +
+                    '}';
+        }
     }
 }

@@ -51,7 +51,24 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation 'com.google.mlkit:face-detection:16.1.5'
 
+    // TensorFlow Lite for face anti-spoofing and recognition
     implementation 'com.google.ai.edge.litert:litert:1.0.1'
     implementation 'com.google.ai.edge.litert:litert-support-api:1.0.1'
 
+    // RecyclerView and CardView for attendance list
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.cardview:cardview:1.0.0'
+
+    // Material Design Components
+    implementation 'com.google.android.material:material:1.12.0'
+
+    // SQLite database (built-in Android)
+    // No additional dependency needed for SQLite
+
+    // Date and time utilities (built-in)
+    // No additional dependency needed
+
+    // Optional: Room database for more advanced database operations
+    // implementation 'androidx.room:room-runtime:2.6.1'
+    // annotationProcessor 'androidx.room:room-compiler:2.6.1'
 }

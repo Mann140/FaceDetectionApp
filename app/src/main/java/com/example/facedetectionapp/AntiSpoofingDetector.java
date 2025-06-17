@@ -17,6 +17,8 @@ import org.tensorflow.lite.support.common.FileUtil;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
+import java.util.List;
 
 public class AntiSpoofingDetector {
     private static final String TAG = "AntiSpoofingDetector";
@@ -29,8 +31,13 @@ public class AntiSpoofingDetector {
     private Interpreter interpreter;
     private boolean isModelLoaded = false;
 
+    // Temporal consistency for better accuracy
+    private List<AnalysisResult> recentResults = new ArrayList<>();
+    private static final int TEMPORAL_WINDOW = 3; // Average over 3 frames
+    private static final int MIN_FACE_SIZE = 80; // Minimum reliable face size
+
     public AntiSpoofingDetector(Context context) {
-        Log.e(TAG, "🚀 FIXED AntiSpoofingDetector - Corrected Real/Fake Logic!");
+        Log.e(TAG, "🚀 IMPROVED AntiSpoofingDetector - Enhanced Small Face Detection!");
 
         try {
             loadModel(context);
@@ -83,25 +90,34 @@ public class AntiSpoofingDetector {
             Log.e(TAG, String.format("📏 Face metrics: area=%.0f, imageArea=%.0f, ratio=%.3f, faceSize=%dx%d",
                     faceArea, imageArea, faceToImageRatio, faceRect.width(), faceRect.height()));
 
+            // Check if face is too small for reliable detection
+            if (faceRect.width() < MIN_FACE_SIZE || faceRect.height() < MIN_FACE_SIZE) {
+                Log.e(TAG, "⚠️ Face too small for reliable detection - defaulting to FAKE for security");
+                return new MainActivity.FaceData(faceRect, false, 85.0f, "TooSmall-DefaultFake", false);
+            }
+
             Bitmap resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, INPUT_SIZE, INPUT_SIZE, true);
             ByteBuffer inputBuffer = preprocessForMobileFaceNet(resizedBitmap);
             float[] outputs = runInference(inputBuffer);
 
-            // Use distance-aware interpretation
-            AnalysisResult result = interpretOutputsWithDistanceAwareness(outputs, faceToImageRatio, faceRect.width());
+            // Use improved interpretation with temporal consistency
+            AnalysisResult result = interpretOutputsWithImprovedLogic(outputs, faceToImageRatio, faceRect.width());
 
-            Log.e(TAG, String.format("🎯 DISTANCE-AWARE Result - IsReal: %s, Confidence: %.1f%% (Method: %s)",
-                    result.isReal, result.confidence, result.method));
+            // Add to temporal window and get smoothed result
+            AnalysisResult finalResult = applyTemporalSmoothing(result);
 
-            return new MainActivity.FaceData(faceRect, result.isReal, result.confidence, result.method, false);
+            Log.e(TAG, String.format("🎯 FINAL Result - IsReal: %s, Confidence: %.1f%% (Method: %s)",
+                    finalResult.isReal, finalResult.confidence, finalResult.method));
+
+            return new MainActivity.FaceData(faceRect, finalResult.isReal, finalResult.confidence, finalResult.method, false);
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Error in analyzeFace", e);
-            return new MainActivity.FaceData(faceRect, true, 30.0f, "Error", false);
+            return new MainActivity.FaceData(faceRect, false, 75.0f, "Error-DefaultFake", false);
         }
     }
 
-    private AnalysisResult interpretOutputsWithDistanceAwareness(float[] outputs, float faceToImageRatio, int faceWidth) {
+    private AnalysisResult interpretOutputsWithImprovedLogic(float[] outputs, float faceToImageRatio, int faceWidth) {
         // Log the raw outputs
         StringBuilder sb = new StringBuilder("📊 Raw outputs: [");
         for (int i = 0; i < Math.min(outputs.length, 8); i++) {
@@ -111,28 +127,28 @@ public class AntiSpoofingDetector {
         sb.append("]");
         Log.e(TAG, sb.toString());
 
-        // Enhanced pattern analysis with distance context
+        // Enhanced pattern analysis with more aggressive small face detection
         float firstHalf = outputs[0] + outputs[1] + outputs[2] + outputs[3];
         float secondHalf = outputs[4] + outputs[5] + outputs[6] + outputs[7];
         float totalSum = firstHalf + secondHalf;
         float average = totalSum / 8.0f;
 
-        // Distance categorization for adaptive thresholds
+        // More aggressive distance categorization
         String distanceCategory;
         float distanceMultiplier;
 
-        if (faceToImageRatio > 0.15f || faceWidth > 200) {
+        if (faceToImageRatio > 0.20f || faceWidth > 250) {
             distanceCategory = "CLOSE";
-            distanceMultiplier = 1.0f; // Standard detection
-        } else if (faceToImageRatio > 0.08f || faceWidth > 120) {
+            distanceMultiplier = 1.0f;
+        } else if (faceToImageRatio > 0.12f || faceWidth > 150) {
             distanceCategory = "MEDIUM";
-            distanceMultiplier = 1.2f; // Slightly more sensitive to fake
-        } else if (faceToImageRatio > 0.04f || faceWidth > 80) {
+            distanceMultiplier = 1.3f;
+        } else if (faceToImageRatio > 0.06f || faceWidth > 100) {
             distanceCategory = "FAR";
-            distanceMultiplier = 1.5f; // More aggressive fake detection
+            distanceMultiplier = 1.8f;
         } else {
             distanceCategory = "VERY_FAR";
-            distanceMultiplier = 2.0f; // Very aggressive fake detection
+            distanceMultiplier = 2.5f; // More aggressive for very small faces
         }
 
         Log.e(TAG, String.format("📏 Distance: %s (ratio=%.3f, width=%d, multiplier=%.1f)",
@@ -165,176 +181,190 @@ public class AntiSpoofingDetector {
         Log.e(TAG, String.format("📊 Refined Counts: veryHigh=%d, high=%d, moderate=%d, low=%d, neg=%d",
                 veryHighCount, highCount, moderateCount, lowCount, negativeCount));
 
-        // Score-based approach with distance-aware fake detection for images
+        // More aggressive scoring for small faces
         float realScore = 0f;
         float fakeScore = 0f;
         String method = distanceCategory + "-";
 
-        // Factor 1: Overall level analysis with distance compensation
-        float avgThreshold1 = 0.9f - (distanceMultiplier - 1.0f) * 0.1f; // Lower threshold for far distances
-        float avgThreshold2 = 0.75f - (distanceMultiplier - 1.0f) * 0.1f;
-        float avgThreshold3 = 0.5f - (distanceMultiplier - 1.0f) * 0.05f;
+        // Factor 1: Average analysis - more aggressive for small faces
+        float avgThreshold1 = Math.max(0.6f, 0.9f - (distanceMultiplier - 1.0f) * 0.15f);
+        float avgThreshold2 = Math.max(0.5f, 0.75f - (distanceMultiplier - 1.0f) * 0.12f);
+        float avgThreshold3 = Math.max(0.3f, 0.5f - (distanceMultiplier - 1.0f) * 0.08f);
 
         if (average > avgThreshold1) {
-            fakeScore += 4f * distanceMultiplier; // Distance-adjusted fake detection
+            fakeScore += 5f * distanceMultiplier; // Increased penalty
             method += "VeryHighAvg ";
         } else if (average > avgThreshold2) {
-            fakeScore += 2.5f * distanceMultiplier;
+            fakeScore += 3f * distanceMultiplier; // Increased penalty
             method += "HighAvg ";
         } else if (average > avgThreshold3) {
-            fakeScore += 1f * Math.min(distanceMultiplier, 1.3f); // Cap multiplier for moderate avg
+            fakeScore += 1.5f * Math.min(distanceMultiplier, 1.5f);
             method += "ModAvg ";
-        } else if (average > 0.2f) {
-            realScore += 1.5f; // Moderate average suggests real
+        } else if (average > 0.15f) {
+            realScore += 2f; // Slightly increased real score
             method += "MidAvg ";
         } else {
-            realScore += 3f; // Low average strongly suggests real
+            realScore += 4f; // Increased real score
             method += "LowAvg ";
         }
 
-        // Factor 2: Consistency analysis with distance awareness
-        float stdThreshold1 = 0.03f + (distanceMultiplier - 1.0f) * 0.01f; // Relax for far distances
-        float stdThreshold2 = 0.08f + (distanceMultiplier - 1.0f) * 0.02f;
+        // Factor 2: Uniformity analysis - more sensitive for small faces
+        float stdThreshold1 = Math.max(0.02f, 0.03f + (distanceMultiplier - 1.0f) * 0.005f);
+        float stdThreshold2 = Math.max(0.05f, 0.08f + (distanceMultiplier - 1.0f) * 0.015f);
 
         if (standardDeviation < stdThreshold1) {
-            fakeScore += 3f * distanceMultiplier; // Very uniform suggests fake
+            fakeScore += 4f * distanceMultiplier; // Increased penalty for uniformity
             method += "VeryUniform ";
         } else if (standardDeviation < stdThreshold2) {
-            fakeScore += 2f * distanceMultiplier; // Somewhat uniform suggests fake
+            fakeScore += 2.5f * distanceMultiplier;
             method += "Uniform ";
-        } else if (standardDeviation < 0.2f) {
-            fakeScore += 0.5f * Math.min(distanceMultiplier, 1.2f); // Slightly uniform leans fake
+        } else if (standardDeviation < 0.15f) {
+            fakeScore += 1f * Math.min(distanceMultiplier, 1.3f);
             method += "SlightUniform ";
-        } else if (standardDeviation > 0.5f) {
-            realScore += 3f; // High variation strongly suggests real
+        } else if (standardDeviation > 0.4f) {
+            realScore += 3.5f; // Increased real score for high variation
             method += "HighVar ";
         } else {
-            realScore += 1.5f; // Moderate variation suggests real
+            realScore += 2f;
             method += "ModVar ";
         }
 
-        // Factor 3: Distribution analysis with distance compensation
-        int highCountThreshold = (int)(7 - (distanceMultiplier - 1.0f) * 1); // Lower threshold for far distances
+        // Factor 3: Distribution analysis - more aggressive thresholds
+        int highCountThreshold = Math.max(4, (int)(8 - (distanceMultiplier - 1.0f) * 2));
 
-        if (veryHighCount >= Math.max(6, highCountThreshold)) {
-            fakeScore += 3f * distanceMultiplier; // Many high values suggest fake
+        if (veryHighCount >= Math.max(5, highCountThreshold)) {
+            fakeScore += 4f * distanceMultiplier; // Increased penalty
             method += "AlmostAllHigh ";
-        } else if (veryHighCount >= Math.max(4, highCountThreshold - 2)) {
-            fakeScore += 2f * distanceMultiplier;
+        } else if (veryHighCount >= Math.max(3, highCountThreshold - 2)) {
+            fakeScore += 3f * distanceMultiplier; // Increased penalty
             method += "ManyHigh ";
         } else if (veryHighCount >= Math.max(2, highCountThreshold - 4)) {
-            fakeScore += 1f * Math.min(distanceMultiplier, 1.3f);
+            fakeScore += 1.5f * Math.min(distanceMultiplier, 1.5f);
             method += "SomeHigh ";
         }
 
         if (negativeCount >= 4 || lowCount >= 5) {
-            realScore += 3f; // Many low/negative values strongly suggest real
+            realScore += 4f; // Increased real score
             method += "ManyLow ";
         } else if (negativeCount >= 2 || lowCount >= 3) {
-            realScore += 2f; // Some low/negative values suggest real
+            realScore += 2.5f;
             method += "SomeLow ";
         } else if (negativeCount >= 1 || lowCount >= 1) {
-            realScore += 1f; // Few low/negative values suggest real
+            realScore += 1.5f;
             method += "FewLow ";
         }
 
-        // Factor 4: Range analysis with distance awareness
-        float rangeThreshold1 = 0.05f + (distanceMultiplier - 1.0f) * 0.02f; // Relax for distance
-        float rangeThreshold2 = 0.15f + (distanceMultiplier - 1.0f) * 0.03f;
+        // Factor 4: Range analysis
+        float rangeThreshold1 = Math.max(0.03f, 0.05f + (distanceMultiplier - 1.0f) * 0.015f);
+        float rangeThreshold2 = Math.max(0.08f, 0.15f + (distanceMultiplier - 1.0f) * 0.025f);
 
         if (overallRange < rangeThreshold1) {
-            fakeScore += 2.5f * distanceMultiplier; // Very small range suggests fake
+            fakeScore += 3f * distanceMultiplier;
             method += "VerySmallRange ";
         } else if (overallRange < rangeThreshold2) {
-            fakeScore += 1.5f * distanceMultiplier; // Small range suggests fake
+            fakeScore += 2f * distanceMultiplier;
             method += "SmallRange ";
-        } else if (overallRange > 1.0f) {
-            realScore += 2f; // Large range suggests real
+        } else if (overallRange > 0.8f) {
+            realScore += 2.5f;
             method += "LargeRange ";
-        } else if (overallRange > 0.5f) {
-            realScore += 1f; // Medium range suggests real
+        } else if (overallRange > 0.4f) {
+            realScore += 1.5f;
             method += "MediumRange ";
         }
 
-        // Factor 5: Pattern analysis
-        float halfDifference = Math.abs(firstHalf - secondHalf);
-        if (halfDifference > 2.5f) {
-            realScore += 2f; // Very asymmetric halves suggest real
-            method += "VeryAsymmetric ";
-        } else if (halfDifference > 1.0f) {
-            realScore += 1f; // Asymmetric halves suggest real
-            method += "Asymmetric ";
-        } else if (halfDifference < 0.2f) {
-            fakeScore += 1f * Math.min(distanceMultiplier, 1.3f); // Very symmetric suggests fake
-            method += "VerySymmetric ";
-        }
-
-        // Factor 6: Distance-specific image detection patterns
-        float adjustedAverage = average + (distanceMultiplier - 1.0f) * 0.05f; // Compensate for distance
-        if (veryHighCount + highCount >= Math.max(5, 7 - (int)distanceMultiplier) &&
-                overallRange < rangeThreshold2 && adjustedAverage > 0.6f) {
-            fakeScore += 2.5f * distanceMultiplier; // Distance-adjusted image pattern
-            method += "DistanceImagePattern ";
-        }
-
-        // Factor 7: Special handling for far distances
-        if (distanceMultiplier >= 1.5f) {
-            // At far distances, even moderate uniformity suggests images
-            if (veryHighCount >= 3 && standardDeviation < 0.15f) {
-                fakeScore += 1.5f; // Additional fake score for far distance uniformity
-                method += "FarDistanceUniform ";
+        // Factor 5: Small face bias - be more suspicious of small faces
+        if (distanceMultiplier >= 2.0f) {
+            if (veryHighCount + highCount >= 4 && standardDeviation < 0.2f) {
+                fakeScore += 2f; // Additional penalty for small faces with suspicious patterns
+                method += "SmallFaceBias ";
             }
 
-            // At very far distances, bias toward fake unless clear real indicators
-            if (distanceMultiplier >= 2.0f && negativeCount == 0 && lowCount <= 1) {
-                fakeScore += 1f; // Very far distance bias
-                method += "VeryFarBias ";
+            // Very aggressive for tiny faces
+            if (distanceMultiplier >= 2.5f && average > 0.4f && veryHighCount >= 3) {
+                fakeScore += 2f; // Extra penalty for very small faces
+                method += "TinyFacePenalty ";
             }
         }
 
-        // Real faces often have some variation and lower values
-        if ((negativeCount + lowCount >= 2) && standardDeviation > 0.1f) {
-            realScore += 1.5f; // Real face variation pattern
-            method += "RealPattern ";
-        }
-
-        // Decision making with distance-adjusted thresholds
+        // Decision making with more conservative thresholds for small faces
         float totalScore = realScore + fakeScore;
         float fakePercentage = totalScore > 0 ? (fakeScore / totalScore) * 100f : 50f;
 
         boolean isReal;
         float confidence;
 
-        // Distance-adjusted decision thresholds
-        float fakeThreshold = Math.max(55f, 60f - (distanceMultiplier - 1.0f) * 8f); // Lower threshold for far
-        float realThreshold = Math.min(45f, 40f + (distanceMultiplier - 1.0f) * 5f); // Higher threshold for far
+        // More conservative thresholds (easier to classify as fake)
+        float fakeThreshold = Math.max(40f, 60f - (distanceMultiplier - 1.0f) * 12f); // Lower threshold
+        float realThreshold = Math.min(35f, 40f + (distanceMultiplier - 1.0f) * 8f);  // Higher threshold
 
         if (fakePercentage >= fakeThreshold) {
             isReal = false; // Fake
-            confidence = Math.min(95f, 65f + (fakePercentage - fakeThreshold) * 0.8f);
+            confidence = Math.min(95f, 70f + (fakePercentage - fakeThreshold) * 0.6f);
             method = "Fake-" + method.trim();
         } else if (fakePercentage <= realThreshold) {
             isReal = true; // Real
-            confidence = Math.min(95f, 65f + (fakeThreshold - fakePercentage) * 0.8f);
+            confidence = Math.min(95f, 70f + (fakeThreshold - fakePercentage) * 0.6f);
             method = "Real-" + method.trim();
         } else {
-            // Uncertain zone - bias based on distance
-            if (distanceMultiplier >= 1.3f) {
-                isReal = false; // Lean fake for distant images
-                confidence = 50f + (fakePercentage - 50f) * 0.3f;
-                method = "UncertainFar-Fake-" + method.trim();
+            // Uncertain zone - for small faces, default to fake for security
+            if (distanceMultiplier >= 1.8f) {
+                isReal = false; // More conservative for distant faces
+                confidence = 65f;
+                method = "UncertainSmall-Fake-" + method.trim();
             } else {
-                isReal = true; // Lean real for close images
-                confidence = 50f + (50f - fakePercentage) * 0.3f;
-                method = "UncertainClose-Real-" + method.trim();
+                isReal = true;
+                confidence = 60f;
+                method = "UncertainLarge-Real-" + method.trim();
             }
         }
 
-        Log.e(TAG, String.format("🎯 DISTANCE-AWARE Decision: %s (realScore=%.1f, fakeScore=%.1f, fakePct=%.1f%%, confidence=%.1f%%, thresholds: fake>%.1f, real<%.1f)",
+        Log.e(TAG, String.format("🎯 IMPROVED Decision: %s (realScore=%.1f, fakeScore=%.1f, fakePct=%.1f%%, confidence=%.1f%%, thresholds: fake>%.1f, real<%.1f)",
                 isReal ? "REAL" : "FAKE", realScore, fakeScore, fakePercentage, confidence, fakeThreshold, realThreshold));
         Log.e(TAG, String.format("🔍 Method: %s", method));
 
         return new AnalysisResult(isReal, confidence, method);
+    }
+
+    private AnalysisResult applyTemporalSmoothing(AnalysisResult currentResult) {
+        // Add current result to temporal window
+        recentResults.add(currentResult);
+
+        // Keep only recent results
+        if (recentResults.size() > TEMPORAL_WINDOW) {
+            recentResults.remove(0);
+        }
+
+        // If we don't have enough samples yet, return current result
+        if (recentResults.size() < 2) {
+            return currentResult;
+        }
+
+        // Calculate temporal average
+        float avgConfidence = 0f;
+        int realCount = 0;
+
+        for (AnalysisResult result : recentResults) {
+            avgConfidence += result.confidence;
+            if (result.isReal) realCount++;
+        }
+
+        avgConfidence /= recentResults.size();
+
+        // Use majority vote for classification, but be conservative (bias toward fake)
+        boolean isReal = realCount > (recentResults.size() / 2);
+
+        // For small faces, require stronger evidence for "real" classification
+        if (currentResult.method.contains("VERY_FAR") || currentResult.method.contains("FAR")) {
+            // Require 2/3 majority for real classification on small faces
+            isReal = realCount >= Math.ceil(recentResults.size() * 0.67);
+        }
+
+        String method = "Temporal-" + currentResult.method;
+
+        Log.e(TAG, String.format("🕐 Temporal Analysis: %d samples, %d real votes, final: %s (%.1f%%)",
+                recentResults.size(), realCount, isReal ? "REAL" : "FAKE", avgConfidence));
+
+        return new AnalysisResult(isReal, Math.min(95f, Math.max(60f, avgConfidence)), method);
     }
 
     private float calculateStandardDeviation(float[] values, float mean) {
@@ -505,6 +535,7 @@ public class AntiSpoofingDetector {
             interpreter = null;
         }
         isModelLoaded = false;
+        recentResults.clear();
     }
 
     // Helper class for analysis results

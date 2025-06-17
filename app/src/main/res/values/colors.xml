@@ -1,5 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
+    <!-- Primary App Colors -->
+    <color name="primary_color">#FF2196F3</color>
+    <color name="primary_dark_color">#FF1976D2</color>
+    <color name="accent_color">#FF03DAC5</color>
+
+    <!-- Status Colors -->
+    <color name="status_present">#FF4CAF50</color>
+    <color name="status_absent">#FFF44336</color>
+    <color name="status_in">#FF2196F3</color>
+    <color name="status_out">#FFFF9800</color>
+
+    <!-- Background Colors -->
+    <color name="background_light">#FFFAFAFA</color>
+    <color name="card_background">#FFFFFFFF</color>
+
+    <!-- Text Colors -->
+    <color name="text_primary">#DE000000</color>
+    <color name="text_secondary">#8A000000</color>
+    <color name="text_hint">#61000000</color>
 </resources>

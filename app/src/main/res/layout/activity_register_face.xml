@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black"
+    tools:context=".RegisterFaceActivity">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Header -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Register New Face"
+            android:textColor="@android:color/white"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:padding="16dp"
+            android:background="#FF2196F3" />
+
+        <!-- Camera Preview Section -->
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="300dp">
+
+            <!-- Camera Preview -->
+            <androidx.camera.view.PreviewView
+                android:id="@+id/previewView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <!-- Face Detection Overlay -->
+            <ImageView
+                android:id="@+id/overlayImageView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="matrix" />
+
+            <!-- Status Overlay -->
+            <TextView
+                android:id="@+id/statusTextView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_alignParentBottom="true"
+                android:background="#80000000"
+                android:text="Position your face in the camera"
+                android:textColor="@android:color/white"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:padding="12dp"
+                android:gravity="center" />
+
+        </RelativeLayout>
+
+        <!-- Camera Controls -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:gravity="center">
+
+            <Button
+                android:id="@+id/captureButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Capture Face"
+                android:textColor="@android:color/white"
+                android:background="@drawable/button_background"
+                android:padding="12dp"
+                android:minWidth="150dp" />
+
+        </LinearLayout>
+
+        <!-- User Information Form -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="@android:color/white">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Employee Information"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@android:color/black"
+                android:layout_marginBottom="16dp" />
+
+            <!-- Name Input -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:hintTextAppearance="@style/TextAppearance.AppCompat.Small">
+
+                <EditText
+                    android:id="@+id/nameEditText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Full Name *"
+                    android:inputType="textPersonName"
+                    android:textSize="16sp"
+                    android:padding="12dp"
+                    android:background="@drawable/edittext_background" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Employee ID Input -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                app:hintTextAppearance="@style/TextAppearance.AppCompat.Small">
+
+                <EditText
+                    android:id="@+id/employeeIdEditText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Employee ID *"
+                    android:inputType="textNoSuggestions"
+                    android:textSize="16sp"
+                    android:padding="12dp"
+                    android:background="@drawable/edittext_background" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Department Input -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                app:hintTextAppearance="@style/TextAppearance.AppCompat.Small">
+
+                <EditText
+                    android:id="@+id/departmentEditText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Department (optional)"
+                    android:inputType="text"
+                    android:textSize="16sp"
+                    android:padding="12dp"
+                    android:background="@drawable/edittext_background" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Save Button -->
+            <Button
+                android:id="@+id/saveButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Save Registration"
+                android:textColor="@android:color/white"
+                android:background="@drawable/button_background"
+                android:padding="16dp"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:enabled="false" />
+
+            <!-- Instructions -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Instructions:\n• Position your face clearly in the camera\n• Ensure good lighting\n• Look directly at the camera\n• Click 'Capture Face' when ready\n• Fill in your details and save"
+                android:textSize="14sp"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginTop="16dp"
+                android:padding="12dp"
+                android:background="#F5F5F5" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>
