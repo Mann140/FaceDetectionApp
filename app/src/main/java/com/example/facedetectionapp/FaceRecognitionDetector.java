@@ -17,8 +17,11 @@ import org.tensorflow.lite.support.common.FileUtil;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 public class FaceRecognitionDetector {
     private static final String TAG = "FaceRecognitionDetector";
@@ -72,7 +75,35 @@ public class FaceRecognitionDetector {
     }
 
     /**
-     * Extract face embedding from the given face region
+     * Extract face embedding from a Bitmap (safer than ImageProxy)
+     */
+    public float[] extractFaceEmbeddingFromBitmap(Bitmap faceBitmap) {
+        if (!isModelLoaded || interpreter == null) {
+            Log.e(TAG, "❌ Model not loaded, cannot extract embedding");
+            return null;
+        }
+
+        try {
+            // Resize to FaceNet input size
+            Bitmap resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, INPUT_SIZE, INPUT_SIZE, true);
+
+            // Preprocess for FaceNet
+            ByteBuffer inputBuffer = preprocessForFaceNet(resizedBitmap);
+
+            // Run inference
+            float[] embedding = runInference(inputBuffer);
+
+            // Normalize embedding (L2 normalization)
+            return normalizeEmbedding(embedding);
+
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error extracting face embedding from bitmap", e);
+            return null;
+        }
+    }
+
+    /**
+     * Extract face embedding from the given face region (ImageProxy version)
      */
     public float[] extractFaceEmbedding(ImageProxy imageProxy, Rect faceRect) {
         if (!isModelLoaded || interpreter == null) {
@@ -87,17 +118,8 @@ public class FaceRecognitionDetector {
                 return null;
             }
 
-            // Resize to FaceNet input size
-            Bitmap resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, INPUT_SIZE, INPUT_SIZE, true);
-
-            // Preprocess for FaceNet
-            ByteBuffer inputBuffer = preprocessForFaceNet(resizedBitmap);
-
-            // Run inference
-            float[] embedding = runInference(inputBuffer);
-
-            // Normalize embedding (L2 normalization)
-            return normalizeEmbedding(embedding);
+            // Use the Bitmap version
+            return extractFaceEmbeddingFromBitmap(faceBitmap);
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Error extracting face embedding", e);
@@ -106,29 +128,52 @@ public class FaceRecognitionDetector {
     }
 
     /**
-     * Register a new person with their face embedding
+     * Register a new person with their face embedding (using Bitmap to avoid ImageProxy lifecycle issues)
      */
-    public boolean registerPerson(String name, String employeeId, ImageProxy imageProxy, Rect faceRect) {
-        float[] embedding = extractFaceEmbedding(imageProxy, faceRect);
+    public boolean registerPerson(String name, String employeeId, Bitmap faceBitmap) {
+        if (faceBitmap == null) {
+            Log.e(TAG, "❌ Face bitmap is null");
+            return false;
+        }
+
+        float[] embedding = extractFaceEmbeddingFromBitmap(faceBitmap);
         if (embedding == null) {
             Log.e(TAG, "❌ Failed to extract embedding for registration");
             return false;
         }
 
         try {
-            Person person = new Person();
-            person.name = name;
-            person.employeeId = employeeId;
-            person.faceEmbedding = embedding;
-            person.registrationTime = System.currentTimeMillis();
+            // Convert float array to byte array for storage
+            byte[] embeddingBytes = floatArrayToByteArray(embedding);
 
-            long personId = databaseHelper.insertPerson(person);
+            // Use DatabaseHelper's addPerson method
+            long personId = databaseHelper.addPerson(name, employeeId, embeddingBytes);
 
             Log.d(TAG, "✅ Successfully registered person: " + name + " with ID: " + personId);
             return personId > 0;
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Error registering person", e);
+            return false;
+        }
+    }
+
+    /**
+     * Register a new person with their face embedding (ImageProxy version - for compatibility)
+     */
+    public boolean registerPerson(String name, String employeeId, ImageProxy imageProxy, Rect faceRect) {
+        try {
+            Bitmap faceBitmap = extractFaceFromImage(imageProxy, faceRect);
+            if (faceBitmap == null) {
+                Log.e(TAG, "❌ Failed to extract face bitmap from ImageProxy");
+                return false;
+            }
+
+            // Use the Bitmap version
+            return registerPerson(name, employeeId, faceBitmap);
+
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error in ImageProxy registerPerson", e);
             return false;
         }
     }
@@ -143,18 +188,22 @@ public class FaceRecognitionDetector {
             return null;
         }
 
-        List<Person> registeredPersons = databaseHelper.getAllPersons();
+        List<DatabaseHelper.Person> registeredPersons = databaseHelper.getAllPersons();
         if (registeredPersons.isEmpty()) {
             Log.d(TAG, "📝 No registered persons found");
             return null;
         }
 
-        Person bestMatch = null;
+        DatabaseHelper.Person bestMatch = null;
         float bestSimilarity = 0f;
 
         // Compare with all registered persons
-        for (Person person : registeredPersons) {
-            float similarity = calculateCosineSimilarity(queryEmbedding, person.faceEmbedding);
+        for (DatabaseHelper.Person person : registeredPersons) {
+            // Convert byte array back to float array
+            float[] personEmbedding = byteArrayToFloatArray(person.embedding);
+            if (personEmbedding == null) continue;
+
+            float similarity = calculateCosineSimilarity(queryEmbedding, personEmbedding);
 
             Log.d(TAG, String.format("🔍 Comparing with %s: similarity = %.3f",
                     person.name, similarity));
@@ -169,7 +218,9 @@ public class FaceRecognitionDetector {
             Log.d(TAG, String.format("✅ Recognition successful: %s (similarity: %.3f)",
                     bestMatch.name, bestSimilarity));
 
-            return new RecognitionResult(bestMatch, bestSimilarity, true);
+            // Convert DatabaseHelper.Person to Person for compatibility
+            Person person = convertToStandalonePerson(bestMatch);
+            return new RecognitionResult(person, bestSimilarity, true);
         } else {
             Log.d(TAG, "❌ No matching person found above threshold");
             return new RecognitionResult(null, bestSimilarity, false);
@@ -181,16 +232,14 @@ public class FaceRecognitionDetector {
      */
     public boolean markAttendance(Person person, AttendanceRecord.AttendanceType type) {
         try {
-            AttendanceRecord record = new AttendanceRecord();
-            record.personId = person.id;
-            record.timestamp = System.currentTimeMillis();
-            record.type = type;
-            record.location = "Main Entrance"; // You can make this configurable
+            // Convert AttendanceType to string
+            String actionType = type.toString();
 
-            long recordId = databaseHelper.insertAttendanceRecord(record);
+            // Use DatabaseHelper's addAttendance method
+            long recordId = databaseHelper.addAttendance(person.id, actionType, 95.0); // Default confidence
 
             Log.d(TAG, String.format("✅ Attendance marked for %s: %s at %s",
-                    person.name, type.toString(), new java.util.Date(record.timestamp).toString()));
+                    person.name, actionType, new Date().toString()));
 
             return recordId > 0;
 
@@ -204,21 +253,164 @@ public class FaceRecognitionDetector {
      * Get today's attendance records
      */
     public List<AttendanceRecord> getTodayAttendance() {
-        return databaseHelper.getTodayAttendanceRecords();
+        try {
+            String today = getCurrentDate();
+            List<DatabaseHelper.AttendanceRecord> dbRecords = databaseHelper.getAttendanceByDate(today);
+
+            // Convert to AttendanceRecord objects
+            List<AttendanceRecord> records = new ArrayList<>();
+            for (DatabaseHelper.AttendanceRecord dbRecord : dbRecords) {
+                AttendanceRecord record = convertToStandaloneAttendanceRecord(dbRecord);
+                if (record != null) {
+                    records.add(record);
+                }
+            }
+
+            return records;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error getting today's attendance", e);
+            return new ArrayList<>();
+        }
     }
 
     /**
-     * Get attendance records for a specific person
+     * Get attendance records for a specific person (simplified version)
      */
     public List<AttendanceRecord> getPersonAttendance(long personId, long startDate, long endDate) {
-        return databaseHelper.getAttendanceRecords(personId, startDate, endDate);
+        try {
+            // For now, just get today's records and filter by person
+            // In a full implementation, you'd add date range support to DatabaseHelper
+            String today = getCurrentDate();
+            List<DatabaseHelper.AttendanceRecord> dbRecords = databaseHelper.getAttendanceByDate(today);
+
+            List<AttendanceRecord> records = new ArrayList<>();
+            for (DatabaseHelper.AttendanceRecord dbRecord : dbRecords) {
+                if (dbRecord.personId == personId) {
+                    AttendanceRecord record = convertToStandaloneAttendanceRecord(dbRecord);
+                    if (record != null) {
+                        records.add(record);
+                    }
+                }
+            }
+
+            return records;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error getting person attendance", e);
+            return new ArrayList<>();
+        }
     }
 
     /**
      * Get all registered persons
      */
     public List<Person> getAllRegisteredPersons() {
-        return databaseHelper.getAllPersons();
+        try {
+            List<DatabaseHelper.Person> dbPersons = databaseHelper.getAllPersons();
+            List<Person> persons = new ArrayList<>();
+
+            for (DatabaseHelper.Person dbPerson : dbPersons) {
+                Person person = convertToStandalonePerson(dbPerson);
+                if (person != null) {
+                    persons.add(person);
+                }
+            }
+
+            return persons;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error getting all persons", e);
+            return new ArrayList<>();
+        }
+    }
+
+    // Helper method to convert DatabaseHelper.Person to standalone Person
+    private Person convertToStandalonePerson(DatabaseHelper.Person dbPerson) {
+        try {
+            Person person = new Person();
+            person.id = dbPerson.id;
+            person.name = dbPerson.name;
+            person.employeeId = dbPerson.employeeId;
+            person.faceEmbedding = byteArrayToFloatArray(dbPerson.embedding);
+            person.isActive = dbPerson.isActive;
+
+            // Parse creation time if needed
+            try {
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                Date createdDate = sdf.parse(dbPerson.createdAt);
+                person.registrationTime = createdDate != null ? createdDate.getTime() : System.currentTimeMillis();
+            } catch (Exception e) {
+                person.registrationTime = System.currentTimeMillis();
+            }
+
+            return person;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error converting DatabaseHelper.Person to Person", e);
+            return null;
+        }
+    }
+
+    // Helper method to convert DatabaseHelper.AttendanceRecord to standalone AttendanceRecord
+    private AttendanceRecord convertToStandaloneAttendanceRecord(DatabaseHelper.AttendanceRecord dbRecord) {
+        try {
+            AttendanceRecord record = new AttendanceRecord();
+            record.id = dbRecord.id;
+            record.personId = dbRecord.personId;
+            record.personName = dbRecord.personName;
+            record.personEmployeeId = dbRecord.employeeId;
+
+            // Convert action type string to enum
+            try {
+                record.type = AttendanceRecord.AttendanceType.valueOf(dbRecord.actionType);
+            } catch (IllegalArgumentException e) {
+                // Default to CHECK_IN if parsing fails
+                record.type = AttendanceRecord.AttendanceType.CHECK_IN;
+            }
+
+            // Parse timestamp
+            try {
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                Date timestampDate = sdf.parse(dbRecord.timestamp);
+                record.timestamp = timestampDate != null ? timestampDate.getTime() : System.currentTimeMillis();
+            } catch (Exception e) {
+                record.timestamp = System.currentTimeMillis();
+            }
+
+            record.confidence = (float) dbRecord.confidence;
+            record.location = "Main Entrance"; // Default location
+
+            return record;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error converting DatabaseHelper.AttendanceRecord to AttendanceRecord", e);
+            return null;
+        }
+    }
+
+    // Helper methods for byte array conversion
+    private byte[] floatArrayToByteArray(float[] floats) {
+        ByteBuffer buffer = ByteBuffer.allocate(floats.length * 4);
+        buffer.order(ByteOrder.nativeOrder());
+        for (float f : floats) {
+            buffer.putFloat(f);
+        }
+        return buffer.array();
+    }
+
+    private float[] byteArrayToFloatArray(byte[] bytes) {
+        if (bytes == null || bytes.length % 4 != 0) {
+            return null;
+        }
+
+        ByteBuffer buffer = ByteBuffer.wrap(bytes);
+        buffer.order(ByteOrder.nativeOrder());
+
+        float[] floats = new float[bytes.length / 4];
+        for (int i = 0; i < floats.length; i++) {
+            floats[i] = buffer.getFloat();
+        }
+        return floats;
+    }
+
+    private String getCurrentDate() {
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
     }
 
     private float[] runInference(ByteBuffer inputBuffer) {

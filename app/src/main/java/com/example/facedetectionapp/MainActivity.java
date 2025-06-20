@@ -383,16 +383,16 @@ public class MainActivity extends AppCompatActivity {
 
     private void updateAttendanceStats() {
         new Thread(() -> {
-            DatabaseHelper.AttendanceStats stats = databaseHelper.getTodayStats();
-            List<Person> allPersons = faceRecognitionDetector.getAllRegisteredPersons();
+            DatabaseHelper.Stats stats = databaseHelper.getTodayStats();
+            List<DatabaseHelper.Person> allPersons = databaseHelper.getAllPersons();
 
             uiHandler.post(() -> {
                 String statsText = String.format(Locale.getDefault(),
-                        "📊 Today: %d/%d present • In: %d • Out: %d",
-                        stats.currentlyPresent,
-                        stats.totalRegistered,
-                        stats.checkedInToday,
-                        stats.checkedOutToday
+                        "📊 Today: %d present • Registered: %d • In: %d • Out: %d",
+                        stats.present,
+                        allPersons.size(),
+                        stats.checkedIn,
+                        stats.checkedOut
                 );
                 attendanceStatsText.setText(statsText);
                 attendanceStatsText.setVisibility(View.VISIBLE);

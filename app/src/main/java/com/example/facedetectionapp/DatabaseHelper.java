@@ -16,7 +16,7 @@ import java.util.Locale;
 public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String TAG = "DatabaseHelper";
     private static final String DATABASE_NAME = "attendance.db";
-    private static final int DATABASE_VERSION = 2;
+    private static final int DATABASE_VERSION = 3; // Updated to fix version conflict
 
     // Tables
     private static final String TABLE_PERSONS = "persons";
@@ -41,7 +41,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     public DatabaseHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
-        Log.d(TAG, "🗄️ Database helper initialized");
+        Log.d(TAG, "🗄️ Database helper initialized with version " + DATABASE_VERSION);
     }
 
     @Override
@@ -80,12 +80,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         Log.d(TAG, "🔄 Upgrading database from version " + oldVersion + " to " + newVersion);
 
-        // Drop existing tables
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_ATTENDANCE);
-        db.execSQL("DROP TABLE IF EXISTS " + TABLE_PERSONS);
+        // Handle version upgrades more gracefully
+        if (oldVersion < 3) {
+            // If upgrading from version 2 to 3, just recreate tables
+            // In a production app, you'd want to migrate data instead
+            Log.d(TAG, "🔄 Recreating tables for version 3");
 
-        // Recreate tables
-        onCreate(db);
+            // Drop existing tables
+            db.execSQL("DROP TABLE IF EXISTS " + TABLE_ATTENDANCE);
+            db.execSQL("DROP TABLE IF EXISTS " + TABLE_PERSONS);
+
+            // Recreate tables
+            onCreate(db);
+        }
 
         Log.d(TAG, "✅ Database upgrade completed");
     }
