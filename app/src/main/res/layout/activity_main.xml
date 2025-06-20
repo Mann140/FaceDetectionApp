@@ -1,90 +1,151 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@android:color/black"
-    tools:context=".MainActivity">
+    android:orientation="vertical">
 
-    <!-- Camera Preview -->
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewView"
+    <!-- Toolbar for menu -->
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_centerInParent="true" />
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorPrimary"
+        android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Primary"
+        app:title="Face Attendance"
+        app:titleTextColor="@android:color/white" />
 
-    <!-- Face Overlay View (replaces ImageView overlay) -->
-    <com.example.facedetectionapp.FaceOverlayView
-        android:id="@+id/faceOverlayView"
+    <!-- Main camera content -->
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_alignTop="@id/previewView"
-        android:layout_alignBottom="@id/previewView" />
+        android:layout_height="match_parent">
 
-    <!-- Top Status Bar -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_alignParentTop="true"
-        android:background="#80000000"
-        android:orientation="vertical"
-        android:padding="16dp">
+        <androidx.camera.view.PreviewView
+            android:id="@+id/previewView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
 
-        <TextView
-            android:id="@+id/statusTextView"
+        <View
+            android:id="@+id/overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Top UI Panel -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Initializing..."
-            android:textColor="@android:color/white"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:gravity="center" />
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="#80000000">
 
-        <TextView
-            android:id="@+id/attendanceCountTextView"
+            <TextView
+                android:id="@+id/faceCountText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Initializing..."
+                android:textSize="18sp"
+                android:textColor="@android:color/white"
+                android:background="#90000000"
+                android:padding="8dp"
+                android:drawableStart="@drawable/ic_face"
+                android:drawablePadding="8dp" />
+
+            <TextView
+                android:id="@+id/attendanceStatsText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="16sp"
+                android:textColor="@android:color/white"
+                android:background="#902196F3"
+                android:padding="8dp"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/spoofWarningText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="16sp"
+                android:textColor="@android:color/white"
+                android:background="#80FF0000"
+                android:padding="8dp"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/recognitionStatusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textSize="16sp"
+                android:textColor="@android:color/white"
+                android:background="#8000AA00"
+                android:padding="8dp"
+                android:layout_marginTop="4dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+        <!-- Bottom UI Panel -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Today's Attendance: 0"
-            android:textColor="@android:color/white"
-            android:textSize="14sp"
-            android:gravity="center"
-            android:layout_marginTop="4dp" />
+            android:layout_gravity="bottom"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:background="#80000000">
 
-    </LinearLayout>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
 
-    <!-- Bottom Controls -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_alignParentBottom="true"
-        android:background="#80000000"
-        android:orientation="horizontal"
-        android:padding="16dp"
-        android:gravity="center">
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/checkInButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="CHECK IN"
+                    android:textColor="@android:color/white"
+                    android:backgroundTint="#2E7D32"
+                    style="@style/Widget.MaterialComponents.Button"
+                    android:padding="12dp"
+                    android:layout_marginEnd="8dp"
+                    app:icon="@drawable/ic_login"
+                    app:iconPadding="8dp" />
 
-        <Button
-            android:id="@+id/registerFaceButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Register Face"
-            android:textColor="@android:color/white"
-            android:background="@drawable/button_background"
-            android:layout_marginEnd="8dp"
-            android:padding="12dp" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/checkOutButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="CHECK OUT"
+                    android:textColor="@android:color/white"
+                    android:backgroundTint="#E65100"
+                    style="@style/Widget.MaterialComponents.Button"
+                    android:padding="12dp"
+                    android:layout_marginStart="8dp"
+                    app:icon="@drawable/ic_logout"
+                    app:iconPadding="8dp" />
 
-        <Button
-            android:id="@+id/viewAttendanceButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="View Attendance"
-            android:textColor="@android:color/white"
-            android:background="@drawable/button_background"
-            android:layout_marginStart="8dp"
-            android:padding="12dp" />
+            </LinearLayout>
 
-    </LinearLayout>
+            <TextView
+                android:id="@+id/analysisInfoText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🤖 AI Face Recognition + Anti-Spoofing"
+                android:textSize="14sp"
+                android:textColor="@android:color/white"
+                android:background="#802196F3"
+                android:padding="8dp"
+                android:layout_marginTop="8dp"
+                android:layout_gravity="center" />
 
-</RelativeLayout>
+        </LinearLayout>
+    </FrameLayout>
+
+</LinearLayout>

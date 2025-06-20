@@ -3,20 +3,20 @@ package com.example.facedetectionapp;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Bitmap;
-import android.graphics.Matrix;
 import android.graphics.Rect;
-import android.media.Image;
 import android.os.Bundle;
-import android.util.Log;
-import android.util.Size;
+import android.os.Handler;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.OptIn;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ExperimentalGetImage;
@@ -28,8 +28,6 @@ import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.Task;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
@@ -37,609 +35,383 @@ import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceDetectorOptions;
 
-import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
-
-    private static final String TAG = "MainActivity";
-    private static final int REQUEST_CODE_PERMISSIONS = 10;
-    private static final String[] REQUIRED_PERMISSIONS = {Manifest.permission.CAMERA};
-    private static final long ATTENDANCE_COOLDOWN = 30000; // 30 seconds between attendance marks
-    private static final long UI_UPDATE_INTERVAL = 100; // Update UI every 100ms
-
-    // UI Components
     private PreviewView previewView;
-    private FaceOverlayView faceOverlayView;
-    private TextView statusTextView;
-    private TextView attendanceCountTextView;
-    private Button registerFaceButton;
-    private Button viewAttendanceButton;
+    private TextView faceCountText;
+    private TextView spoofWarningText;
+    private TextView attendanceStatsText;
+    private TextView recognitionStatusText;
+    private FaceOverlayView overlayView;
+    private Button checkInButton, checkOutButton;
 
-    // Camera and ML Kit
-    private ProcessCameraProvider cameraProvider;
-    private FaceDetector faceDetector;
-    private ExecutorService cameraExecutor;
-
-    // Face Recognition Components
+    private FaceDetector detector;
     private AntiSpoofingDetector antiSpoofingDetector;
-    private FaceRecognitionProcessor faceRecognitionProcessor;
-    private AttendanceDatabase database;
+    private FaceRecognitionDetector faceRecognitionDetector;
+    private DatabaseHelper databaseHelper;
 
-    // State Management
+    private AttendanceRecord.AttendanceType pendingAttendanceType = AttendanceRecord.AttendanceType.CHECK_IN;
+    private boolean isProcessingAttendance = false;
+    private Handler uiHandler;
+
+    // Cooldown to prevent repeated attendance marking
+    private static final long ATTENDANCE_COOLDOWN_MS = 5000; // 5 seconds
     private long lastAttendanceTime = 0;
-    private long lastUIUpdateTime = 0;
-    private boolean isProcessingFace = false;
-    private List<FaceData> currentFaceDataList = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        Log.d(TAG, "🚀 MainActivity started");
-
+        uiHandler = new Handler();
         initializeViews();
         initializeComponents();
-        setupClickListeners();
+        setupToolbar();
+        setupUI();
 
-        if (allPermissionsGranted()) {
+        // Check camera permission
+        if (checkCameraPermission()) {
             startCamera();
         } else {
-            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS);
+            requestCameraPermission();
         }
+
+        updateAttendanceStats();
     }
 
     private void initializeViews() {
         previewView = findViewById(R.id.previewView);
-        faceOverlayView = findViewById(R.id.faceOverlayView);
-        statusTextView = findViewById(R.id.statusTextView);
-        attendanceCountTextView = findViewById(R.id.attendanceCountTextView);
-        registerFaceButton = findViewById(R.id.registerFaceButton);
-        viewAttendanceButton = findViewById(R.id.viewAttendanceButton);
+        faceCountText = findViewById(R.id.faceCountText);
+        spoofWarningText = findViewById(R.id.spoofWarningText);
+        attendanceStatsText = findViewById(R.id.attendanceStatsText);
+        recognitionStatusText = findViewById(R.id.recognitionStatusText);
+        checkInButton = findViewById(R.id.checkInButton);
+        checkOutButton = findViewById(R.id.checkOutButton);
 
-        // Configure face overlay
-        faceOverlayView.setPreviewSize(640, 480);
-        faceOverlayView.setFrontCamera(true);
+        // Replace placeholder view with custom overlay
+        View placeholder = findViewById(R.id.overlay);
+        ViewGroup parent = (ViewGroup) placeholder.getParent();
+        int index = parent.indexOfChild(placeholder);
+        parent.removeView(placeholder);
 
-        // Set initial status
-        updateStatus("Initializing camera...");
+        overlayView = new FaceOverlayView(this, null);
+        overlayView.setLayoutParams(placeholder.getLayoutParams());
+        parent.addView(overlayView, index);
     }
 
     private void initializeComponents() {
-        // Initialize camera executor
-        cameraExecutor = Executors.newSingleThreadExecutor();
-
         // Initialize database
-        database = new AttendanceDatabase(this);
-        updateAttendanceCount();
+        databaseHelper = new DatabaseHelper(this);
 
-        // Initialize face detector with high performance settings
+        // Initialize detectors
+        antiSpoofingDetector = new AntiSpoofingDetector(this);
+        faceRecognitionDetector = new FaceRecognitionDetector(this);
+
+        // Configure face detector
         FaceDetectorOptions options = new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-                .setMinFaceSize(0.15f) // Minimum face size relative to image
-                .enableTracking() // Enable face tracking for better performance
+                .enableTracking()
                 .build();
 
-        faceDetector = FaceDetection.getClient(options);
-
-        // Initialize anti-spoofing detector
-        antiSpoofingDetector = new AntiSpoofingDetector(this);
-
-        // Initialize face recognition processor
-        faceRecognitionProcessor = new FaceRecognitionProcessor(this);
-
-        Log.d(TAG, "✅ All components initialized");
+        detector = FaceDetection.getClient(options);
     }
 
-    private void setupClickListeners() {
-        registerFaceButton.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, RegisterFaceActivity.class);
-            startActivity(intent);
-        });
+    private void setupToolbar() {
+        com.google.android.material.appbar.MaterialToolbar toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
 
-        viewAttendanceButton.setOnClickListener(v -> {
-            Intent intent = new Intent(MainActivity.this, AttendanceActivity.class);
-            startActivity(intent);
-        });
-    }
-
-    private boolean allPermissionsGranted() {
-        for (String permission : REQUIRED_PERMISSIONS) {
-            if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-                return false;
-            }
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setTitle("Face Attendance System");
+            getSupportActionBar().setDisplayShowTitleEnabled(true);
         }
+    }
+
+    private void setupUI() {
+        checkInButton.setOnClickListener(v -> {
+            pendingAttendanceType = AttendanceRecord.AttendanceType.CHECK_IN;
+            checkInButton.setEnabled(false);
+            checkOutButton.setEnabled(true);
+            recognitionStatusText.setText("🔍 Ready to mark CHECK IN - Look at camera");
+            recognitionStatusText.setVisibility(View.VISIBLE);
+        });
+
+        checkOutButton.setOnClickListener(v -> {
+            pendingAttendanceType = AttendanceRecord.AttendanceType.CHECK_OUT;
+            checkInButton.setEnabled(true);
+            checkOutButton.setEnabled(false);
+            recognitionStatusText.setText("🔍 Ready to mark CHECK OUT - Look at camera");
+            recognitionStatusText.setVisibility(View.VISIBLE);
+        });
+
+        // Initially enable check-in
+        checkInButton.setEnabled(true);
+        checkOutButton.setEnabled(false);
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.main_menu, menu);
         return true;
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_CODE_PERMISSIONS) {
-            if (allPermissionsGranted()) {
-                startCamera();
-            } else {
-                Toast.makeText(this, "Permissions not granted by the user.", Toast.LENGTH_SHORT).show();
-                finish();
-            }
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        int id = item.getItemId();
+
+        if (id == R.id.menu_register) {
+            startActivity(new Intent(this, RegistrationActivity.class));
+            return true;
+        } else if (id == R.id.menu_attendance_records) {
+            startActivity(new Intent(this, AttendanceRecordsActivity.class));
+            return true;
+        } else if (id == R.id.menu_manage_persons) {
+            startActivity(new Intent(this, ManagePersonsActivity.class));
+            return true;
+        } else if (id == R.id.menu_settings) {
+            // Future: Settings activity
+            Toast.makeText(this, "Settings coming soon", Toast.LENGTH_SHORT).show();
+            return true;
         }
+
+        return super.onOptionsItemSelected(item);
+    }
+
+    private boolean checkCameraPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestCameraPermission() {
+        ActivityCompat.requestPermissions(this,
+                new String[]{Manifest.permission.CAMERA}, 100);
     }
 
     private void startCamera() {
-        ListenableFuture<ProcessCameraProvider> cameraProviderFuture = ProcessCameraProvider.getInstance(this);
+        faceCountText.setText("Starting camera...");
+
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
+                ProcessCameraProvider.getInstance(this);
 
         cameraProviderFuture.addListener(() -> {
             try {
-                cameraProvider = cameraProviderFuture.get();
-                bindCameraUseCases();
-                updateStatus("Camera ready - Looking for faces...");
-                Log.d(TAG, "✅ Camera started successfully");
+                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
+
+                // Preview
+                Preview preview = new Preview.Builder().build();
+
+                // Front camera selector
+                CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+
+                // Image analysis for face detection and recognition
+                ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build();
+
+                imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor(),
+                        new ImageAnalysis.Analyzer() {
+                            @Override
+                            public void analyze(@NonNull ImageProxy image) {
+                                processImage(image);
+                            }
+                        });
+
+                preview.setSurfaceProvider(previewView.getSurfaceProvider());
+
+                // Unbind all use cases before rebinding
+                cameraProvider.unbindAll();
+
+                // Bind use cases to camera
+                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+
             } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "❌ Error starting camera", e);
-                updateStatus("Camera error: " + e.getMessage());
+                Toast.makeText(this, "Camera failed: " + e.getMessage(),
+                        Toast.LENGTH_SHORT).show();
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
-    private void bindCameraUseCases() {
-        if (cameraProvider == null) {
-            Log.e(TAG, "❌ Camera provider is null");
-            return;
-        }
-
-        // Preview use case
-        Preview preview = new Preview.Builder()
-                .setTargetResolution(new Size(640, 480))
-                .build();
-
-        preview.setSurfaceProvider(previewView.getSurfaceProvider());
-
-        // Image analysis use case for face detection
-        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
-                .setTargetResolution(new Size(640, 480))
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build();
-
-        imageAnalysis.setAnalyzer(cameraExecutor, this::analyzeImage);
-
-        // Select front camera
-        CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
-
-        try {
-            // Unbind use cases before rebinding
-            cameraProvider.unbindAll();
-
-            // Bind use cases to camera
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
-
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Use case binding failed", e);
-            updateStatus("Camera binding failed: " + e.getMessage());
-        }
-    }
-
     @OptIn(markerClass = ExperimentalGetImage.class)
-    private void analyzeImage(ImageProxy imageProxy) {
-        try {
-            // Check if we should process this frame (throttling)
-            long currentTime = System.currentTimeMillis();
-            if (currentTime - lastUIUpdateTime < UI_UPDATE_INTERVAL) {
-                imageProxy.close();
-                return;
-            }
+    private void processImage(ImageProxy imageProxy) {
+        if (imageProxy.getImage() != null) {
+            InputImage image = InputImage.fromMediaImage(
+                    imageProxy.getImage(),
+                    imageProxy.getImageInfo().getRotationDegrees());
 
-            // Skip processing if already processing a face
-            if (isProcessingFace) {
-                imageProxy.close();
-                return;
-            }
-
-            // Convert ImageProxy to InputImage
-            Image mediaImage = imageProxy.getImage();
-            if (mediaImage == null) {
-                imageProxy.close();
-                return;
-            }
-
-            InputImage image = InputImage.fromMediaImage(mediaImage, imageProxy.getImageInfo().getRotationDegrees());
-
-            // Detect faces
-            faceDetector.process(image)
+            detector.process(image)
                     .addOnSuccessListener(faces -> {
-                        processFaces(imageProxy, faces);
-                        lastUIUpdateTime = currentTime;
-                    })
-                    .addOnFailureListener(e -> {
-                        Log.e(TAG, "❌ Face detection failed", e);
-                        runOnUiThread(() -> updateStatus("Face detection error"));
-                        imageProxy.close();
-                    });
+                        List<FaceData> faceDataList = new ArrayList<>();
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error analyzing image", e);
-            imageProxy.close();
-        }
-    }
+                        for (Face face : faces) {
+                            // First check if face is real using anti-spoofing
+                            FaceData spoofingResult = antiSpoofingDetector.analyzeFace(imageProxy, face.getBoundingBox());
 
-    private void processFaces(ImageProxy imageProxy, List<Face> faces) {
-        try {
-            currentFaceDataList.clear();
+                            if (spoofingResult.isReal) {
+                                // If face is real, try to recognize it
+                                FaceRecognitionDetector.RecognitionResult recognitionResult =
+                                        faceRecognitionDetector.recognizeFace(imageProxy, face.getBoundingBox());
 
-            if (faces.isEmpty()) {
-                runOnUiThread(() -> {
-                    updateStatus("No faces detected");
-                    faceOverlayView.clearFaces();
-                });
-                imageProxy.close();
-                return;
-            }
+                                if (recognitionResult != null && recognitionResult.isRecognized) {
+                                    // Known person detected
+                                    FaceData faceData = new FaceData(
+                                            face.getBoundingBox(),
+                                            true,
+                                            recognitionResult.confidence * 100,
+                                            "Real-" + recognitionResult.person.name,
+                                            false
+                                    );
+                                    faceData.recognizedPerson = recognitionResult.person;
+                                    faceDataList.add(faceData);
 
-            Log.d(TAG, "🔍 Processing " + faces.size() + " detected face(s)");
+                                    // Auto-mark attendance if button was pressed and not in cooldown
+                                    long currentTime = System.currentTimeMillis();
+                                    if (!isProcessingAttendance &&
+                                            (currentTime - lastAttendanceTime) > ATTENDANCE_COOLDOWN_MS &&
+                                            (pendingAttendanceType != null)) {
 
-            // Process each detected face
-            for (Face face : faces) {
-                processAttendanceFace(imageProxy, face, currentFaceDataList);
-            }
+                                        isProcessingAttendance = true;
+                                        lastAttendanceTime = currentTime;
 
-            // Update UI with current face data
-            runOnUiThread(() -> {
-                faceOverlayView.updateFaceData(new ArrayList<>(currentFaceDataList));
-                if (!currentFaceDataList.isEmpty()) {
-                    FaceData firstFace = currentFaceDataList.get(0);
-                    updateStatus(firstFace.label + " (" + String.format("%.1f", firstFace.confidence) + "%)");
-                }
-            });
+                                        // Mark attendance in background thread
+                                        new Thread(() -> {
+                                            boolean success = faceRecognitionDetector.markAttendance(
+                                                    recognitionResult.person, pendingAttendanceType);
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error processing faces", e);
-            runOnUiThread(() -> updateStatus("Face processing error"));
-        } finally {
-            imageProxy.close();
-        }
-    }
+                                            uiHandler.post(() -> {
+                                                isProcessingAttendance = false;
 
-    private void processAttendanceFace(ImageProxy imageProxy, Face face, List<FaceData> faceDataList) {
-        // Check if processors are available
-        if (antiSpoofingDetector == null || faceRecognitionProcessor == null) {
-            FaceData errorData = new FaceData(
-                    face.getBoundingBox(),
-                    false,
-                    0.0f,
-                    "Models not loaded",
-                    false
-            );
-            faceDataList.add(errorData);
-            return;
-        }
+                                                if (success) {
+                                                    String message = String.format("✅ %s marked for %s",
+                                                            pendingAttendanceType.getDisplayName(),
+                                                            recognitionResult.person.name);
 
-        try {
-            // First, run anti-spoofing detection
-            FaceData spoofData = antiSpoofingDetector.analyzeFace(imageProxy, face.getBoundingBox());
+                                                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                                                    recognitionStatusText.setText(message);
 
-            Log.d(TAG, "🔍 Anti-spoof result: isReal=" + spoofData.isReal +
-                    ", confidence=" + spoofData.confidence + "%");
+                                                    // Reset buttons
+                                                    checkInButton.setEnabled(true);
+                                                    checkOutButton.setEnabled(true);
+                                                    pendingAttendanceType = null;
 
-            if (spoofData.isReal && spoofData.confidence > 70.0f) {
-                // ✅ FIXED: Extract face bitmap immediately while ImageProxy is still valid
-                Bitmap faceBitmap = extractFaceBitmapFromImageProxy(imageProxy, face.getBoundingBox());
-
-                if (faceBitmap != null) {
-                    // Add temporary data while processing
-                    FaceData tempData = new FaceData(
-                            face.getBoundingBox(),
-                            true,
-                            spoofData.confidence,
-                            "Processing...",
-                            false
-                    );
-                    faceDataList.add(tempData);
-
-                    // Run face recognition on the extracted bitmap (in background thread)
-                    runFaceRecognitionAsync(faceBitmap, face.getBoundingBox(), spoofData, faceDataList, tempData);
-                } else {
-                    Log.e(TAG, "❌ Failed to extract face bitmap");
-                    FaceData faceData = new FaceData(
-                            face.getBoundingBox(),
-                            true,
-                            spoofData.confidence,
-                            "Real but extraction failed",
-                            false
-                    );
-                    faceDataList.add(faceData);
-                }
-            } else {
-                // Face is detected as fake or low confidence
-                Log.d(TAG, "🚫 Face rejected: confidence=" + spoofData.confidence + "%");
-                faceDataList.add(spoofData);
-            }
-
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error processing face", e);
-            FaceData errorData = new FaceData(
-                    face.getBoundingBox(),
-                    false,
-                    0.0f,
-                    "Processing error",
-                    false
-            );
-            faceDataList.add(errorData);
-        }
-    }
-
-    // ✅ FIXED: Extract face bitmap immediately while ImageProxy is still valid
-    @OptIn(markerClass = ExperimentalGetImage.class)
-    private Bitmap extractFaceBitmapFromImageProxy(ImageProxy imageProxy, Rect faceRect) {
-        try {
-            // Check if image is still valid
-            android.media.Image image = imageProxy.getImage();
-            if (image == null) {
-                Log.e(TAG, "❌ ImageProxy.getImage() returned null");
-                return null;
-            }
-
-            // Get dimensions safely
-            int width = image.getWidth();
-            int height = image.getHeight();
-
-            Log.d(TAG, "🔍 Image dimensions: " + width + "x" + height);
-            Log.d(TAG, "🔍 Face rect: " + faceRect.toString());
-
-            Image.Plane[] planes = image.getPlanes();
-            if (planes.length < 3) {
-                Log.e(TAG, "❌ Insufficient image planes: " + planes.length);
-                return null;
-            }
-
-            ByteBuffer yBuffer = planes[0].getBuffer();
-            ByteBuffer uBuffer = planes[1].getBuffer();
-            ByteBuffer vBuffer = planes[2].getBuffer();
-
-            int ySize = yBuffer.remaining();
-            int uSize = uBuffer.remaining();
-            int vSize = vBuffer.remaining();
-
-            if (ySize == 0 || uSize == 0 || vSize == 0) {
-                Log.e(TAG, "❌ Empty image buffers: Y=" + ySize + ", U=" + uSize + ", V=" + vSize);
-                return null;
-            }
-
-            byte[] nv21 = new byte[ySize + uSize + vSize];
-            yBuffer.get(nv21, 0, ySize);
-            vBuffer.get(nv21, ySize, vSize);
-            uBuffer.get(nv21, ySize + vSize, uSize);
-
-            int[] rgbArray = new int[width * height];
-            convertYUV420ToRGB(nv21, rgbArray, width, height);
-
-            Bitmap fullBitmap = Bitmap.createBitmap(rgbArray, width, height, Bitmap.Config.ARGB_8888);
-
-            // Mirror the image for front camera
-            Matrix matrix = new Matrix();
-            matrix.preScale(-1.0f, 1.0f);
-            Bitmap mirroredBitmap = Bitmap.createBitmap(fullBitmap, 0, 0, width, height, matrix, false);
-
-            // Extract face region with padding
-            int padding = Math.max(20, Math.min(faceRect.width(), faceRect.height()) / 10);
-            int left = Math.max(0, faceRect.left - padding);
-            int top = Math.max(0, faceRect.top - padding);
-            int right = Math.min(mirroredBitmap.getWidth(), faceRect.right + padding);
-            int bottom = Math.min(mirroredBitmap.getHeight(), faceRect.bottom + padding);
-
-            int faceWidth = right - left;
-            int faceHeight = bottom - top;
-
-            if (faceWidth <= 0 || faceHeight <= 0) {
-                Log.e(TAG, "❌ Invalid face dimensions: " + faceWidth + "x" + faceHeight);
-                return null;
-            }
-
-            Bitmap faceBitmap = Bitmap.createBitmap(mirroredBitmap, left, top, faceWidth, faceHeight);
-
-            // Make it square
-            int size = Math.min(faceWidth, faceHeight);
-            if (faceWidth != faceHeight) {
-                int xOffset = (faceWidth - size) / 2;
-                int yOffset = (faceHeight - size) / 2;
-                faceBitmap = Bitmap.createBitmap(faceBitmap, xOffset, yOffset, size, size);
-            }
-
-            Log.d(TAG, "✅ Face extraction successful: " + size + "x" + size);
-            return faceBitmap;
-
-        } catch (IllegalStateException e) {
-            Log.e(TAG, "❌ Image already closed: " + e.getMessage());
-            return null;
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error extracting face", e);
-            return null;
-        }
-    }
-
-    // ✅ NEW: Async face recognition method
-    private void runFaceRecognitionAsync(Bitmap faceBitmap, Rect faceRect, FaceData spoofData,
-                                         List<FaceData> faceDataList, FaceData tempData) {
-        // Set processing flag
-        isProcessingFace = true;
-
-        // Run face recognition in background thread
-        new Thread(() -> {
-            try {
-                Log.d(TAG, "🔍 Running face recognition...");
-
-                // Generate face embedding from bitmap
-                float[] faceEmbedding = faceRecognitionProcessor.generateEmbeddingFromBitmap(faceBitmap);
-
-                if (faceEmbedding != null) {
-                    // Compare with stored faces
-                    FaceRecognitionProcessor.RecognitionResult recognitionResult =
-                            faceRecognitionProcessor.recognizeFromEmbedding(faceEmbedding);
-
-                    runOnUiThread(() -> {
-                        // Remove temporary data
-                        faceDataList.remove(tempData);
-
-                        if (recognitionResult.user != null) {
-                            long currentTime = System.currentTimeMillis();
-                            if (currentTime - lastAttendanceTime > ATTENDANCE_COOLDOWN) {
-                                markAttendance(recognitionResult.user, recognitionResult.confidence);
-                                lastAttendanceTime = currentTime;
-
-                                Log.d(TAG, "✅ Attendance marked for: " + recognitionResult.user.name);
+                                                    // Update stats
+                                                    updateAttendanceStats();
+                                                } else {
+                                                    Toast.makeText(MainActivity.this,
+                                                            "❌ Failed to mark attendance", Toast.LENGTH_SHORT).show();
+                                                    recognitionStatusText.setText("❌ Attendance marking failed");
+                                                }
+                                            });
+                                        }).start();
+                                    }
+                                } else {
+                                    // Real face but unknown person
+                                    FaceData faceData = new FaceData(
+                                            face.getBoundingBox(),
+                                            true,
+                                            spoofingResult.confidence,
+                                            "Real-Unknown",
+                                            false
+                                    );
+                                    faceDataList.add(faceData);
+                                }
                             } else {
-                                Log.d(TAG, "⏰ Attendance cooldown active");
+                                // Fake face detected
+                                faceDataList.add(spoofingResult);
                             }
-
-                            FaceData faceData = new FaceData(
-                                    faceRect,
-                                    true,
-                                    recognitionResult.confidence * 100,
-                                    "✅ " + recognitionResult.user.name,
-                                    false
-                            );
-                            faceDataList.add(faceData);
-                        } else {
-                            Log.d(TAG, "❓ Real face but unknown person");
-                            FaceData faceData = new FaceData(
-                                    faceRect,
-                                    true,
-                                    spoofData.confidence,
-                                    "Real but Unknown",
-                                    false
-                            );
-                            faceDataList.add(faceData);
                         }
 
-                        // Update overlay
-                        faceOverlayView.updateFaceData(new ArrayList<>(faceDataList));
-                    });
-                } else {
-                    Log.e(TAG, "❌ Failed to generate face embedding");
-                    runOnUiThread(() -> {
-                        // Remove temporary data
-                        faceDataList.remove(tempData);
+                        // Count real vs fake faces
+                        int realFaces = 0;
+                        int fakeFaces = 0;
+                        int recognizedFaces = 0;
 
-                        FaceData faceData = new FaceData(
-                                faceRect,
-                                true,
-                                spoofData.confidence,
-                                "Real but recognition failed",
-                                false
-                        );
-                        faceDataList.add(faceData);
-                        faceOverlayView.updateFaceData(new ArrayList<>(faceDataList));
-                    });
-                }
+                        for (FaceData data : faceDataList) {
+                            if (data.isReal) {
+                                realFaces++;
+                                if (data.recognizedPerson != null) {
+                                    recognizedFaces++;
+                                }
+                            } else {
+                                fakeFaces++;
+                            }
+                        }
 
-            } catch (Exception e) {
-                Log.e(TAG, "❌ Face recognition error", e);
-                runOnUiThread(() -> {
-                    // Remove temporary data
-                    faceDataList.remove(tempData);
+                        final int finalRealFaces = realFaces;
+                        final int finalFakeFaces = fakeFaces;
+                        final int finalRecognizedFaces = recognizedFaces;
 
-                    FaceData faceData = new FaceData(
-                            faceRect,
-                            true,
-                            spoofData.confidence,
-                            "Recognition error",
-                            false
-                    );
-                    faceDataList.add(faceData);
-                    faceOverlayView.updateFaceData(new ArrayList<>(faceDataList));
-                });
-            } finally {
-                // Clear processing flag
-                isProcessingFace = false;
-            }
+                        runOnUiThread(() -> {
+                            String faceCountMsg = String.format("Faces: %d real (%d known), %d fake",
+                                    finalRealFaces, finalRecognizedFaces, finalFakeFaces);
+                            faceCountText.setText(faceCountMsg);
+
+                            // Show warnings/status
+                            if (finalFakeFaces > 0) {
+                                spoofWarningText.setVisibility(View.VISIBLE);
+                                spoofWarningText.setText("⚠️ Spoofing attempt detected!");
+                                spoofWarningText.setBackgroundColor(0x80FF0000); // Red background
+                            } else if (finalRecognizedFaces > 0) {
+                                spoofWarningText.setVisibility(View.VISIBLE);
+                                spoofWarningText.setText("✓ Known person detected");
+                                spoofWarningText.setBackgroundColor(0x8000FF00); // Green background
+                            } else if (finalRealFaces > 0) {
+                                spoofWarningText.setVisibility(View.VISIBLE);
+                                spoofWarningText.setText("? Real face - Unknown person");
+                                spoofWarningText.setBackgroundColor(0x80FFA500); // Orange background
+                            } else {
+                                spoofWarningText.setVisibility(View.GONE);
+                            }
+
+                            // Update overlay with face data
+                            overlayView.setFacesWithML(faceDataList,
+                                    imageProxy.getWidth(),
+                                    imageProxy.getHeight());
+                        });
+                    })
+                    .addOnCompleteListener(task -> imageProxy.close());
+        } else {
+            imageProxy.close();
+        }
+    }
+
+    private void updateAttendanceStats() {
+        new Thread(() -> {
+            DatabaseHelper.AttendanceStats stats = databaseHelper.getTodayStats();
+            List<Person> allPersons = faceRecognitionDetector.getAllRegisteredPersons();
+
+            uiHandler.post(() -> {
+                String statsText = String.format(Locale.getDefault(),
+                        "📊 Today: %d/%d present • In: %d • Out: %d",
+                        stats.currentlyPresent,
+                        stats.totalRegistered,
+                        stats.checkedInToday,
+                        stats.checkedOutToday
+                );
+                attendanceStatsText.setText(statsText);
+                attendanceStatsText.setVisibility(View.VISIBLE);
+            });
         }).start();
     }
 
-    // ✅ YUV to RGB conversion helper
-    private void convertYUV420ToRGB(byte[] yuv420sp, int[] rgb, int width, int height) {
-        final int frameSize = width * height;
-
-        for (int j = 0, yp = 0; j < height; j++) {
-            int uvp = frameSize + (j >> 1) * width, u = 0, v = 0;
-            for (int i = 0; i < width; i++, yp++) {
-                int y = (0xff & yuv420sp[yp]) - 16;
-                if (y < 0) y = 0;
-                if ((i & 1) == 0) {
-                    v = (0xff & yuv420sp[uvp++]) - 128;
-                    u = (0xff & yuv420sp[uvp++]) - 128;
-                }
-
-                int y1192 = 1192 * y;
-                int r = (y1192 + 1634 * v);
-                int g = (y1192 - 833 * v - 400 * u);
-                int b = (y1192 + 2066 * u);
-
-                if (r < 0) r = 0; else if (r > 262143) r = 262143;
-                if (g < 0) g = 0; else if (g > 262143) g = 262143;
-                if (b < 0) b = 0; else if (b > 262143) b = 262143;
-
-                rgb[yp] = 0xff000000 | ((r << 6) & 0xff0000) | ((g >> 2) & 0xff00) | ((b >> 10) & 0xff);
-            }
-        }
-    }
-
-    private void markAttendance(AttendanceDatabase.User user, float confidence) {
-        try {
-            // Mark attendance in database
-            long attendanceId = database.markAttendance(user.id);
-
-            if (attendanceId != -1) {
-                // Show success toast
-                String message = "✅ Attendance marked for " + user.name +
-                        " (" + String.format("%.1f", confidence * 100) + "% confidence)";
-                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-
-                // Update attendance count
-                updateAttendanceCount();
-
-                // Log success
-                Log.d(TAG, "✅ Attendance marked: " + user.name + " at " +
-                        new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date()));
-
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 100) {
+            if (grantResults.length > 0 &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startCamera();
             } else {
-                Toast.makeText(this, "❌ Failed to mark attendance", Toast.LENGTH_SHORT).show();
-                Log.e(TAG, "❌ Failed to mark attendance for user: " + user.name);
-            }
-
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error marking attendance", e);
-            Toast.makeText(this, "❌ Error marking attendance", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void updateStatus(String status) {
-        if (statusTextView != null) {
-            statusTextView.setText(status);
-            Log.d(TAG, "📱 Status: " + status);
-        }
-    }
-
-    private void updateAttendanceCount() {
-        try {
-            List<AttendanceDatabase.AttendanceRecord> todayRecords = database.getTodayAttendance();
-            String countText = "Today's Attendance: " + todayRecords.size();
-
-            if (attendanceCountTextView != null) {
-                attendanceCountTextView.setText(countText);
-            }
-
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error updating attendance count", e);
-            if (attendanceCountTextView != null) {
-                attendanceCountTextView.setText("Attendance: Error");
+                Toast.makeText(this, "Camera permission required for attendance system",
+                        Toast.LENGTH_LONG).show();
             }
         }
     }
@@ -647,51 +419,46 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        updateAttendanceCount(); // Refresh count when returning to activity
+        updateAttendanceStats();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-
-        // Shutdown camera executor
-        if (cameraExecutor != null) {
-            cameraExecutor.shutdown();
+        // Clean up detectors
+        if (antiSpoofingDetector != null) {
+            antiSpoofingDetector.close();
         }
-
-        // Close face detector
-        if (faceDetector != null) {
-            faceDetector.close();
+        if (faceRecognitionDetector != null) {
+            faceRecognitionDetector.close();
         }
-
-        Log.d(TAG, "🛑 MainActivity destroyed");
     }
 
-    // ===== FACE DATA CLASS =====
-
+    // Enhanced FaceData class with recognition info
     public static class FaceData {
-        public final Rect boundingBox;
-        public final boolean isReal;
-        public final float confidence;
-        public final String label;
-        public final boolean isRecognized;
+        public Rect boundingBox;
+        public boolean isReal;
+        public float confidence;
+        public String detectionMethod;
+        public boolean has3DStructure;
+        public Person recognizedPerson; // Added for recognition
 
-        public FaceData(Rect boundingBox, boolean isReal, float confidence, String label, boolean isRecognized) {
+        public FaceData(Rect boundingBox, boolean isReal) {
+            this.boundingBox = boundingBox;
+            this.isReal = isReal;
+            this.confidence = 75.0f;
+            this.detectionMethod = "ML";
+            this.has3DStructure = false;
+            this.recognizedPerson = null;
+        }
+
+        public FaceData(Rect boundingBox, boolean isReal, float confidence, String detectionMethod, boolean has3DStructure) {
             this.boundingBox = boundingBox;
             this.isReal = isReal;
             this.confidence = confidence;
-            this.label = label;
-            this.isRecognized = isRecognized;
-        }
-
-        @Override
-        public String toString() {
-            return "FaceData{" +
-                    "isReal=" + isReal +
-                    ", confidence=" + confidence +
-                    ", label='" + label + '\'' +
-                    ", isRecognized=" + isRecognized +
-                    '}';
+            this.detectionMethod = detectionMethod;
+            this.has3DStructure = has3DStructure;
+            this.recognizedPerson = null;
         }
     }
 }

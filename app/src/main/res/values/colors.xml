@@ -1,22 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Primary App Colors -->
-    <color name="primary_color">#FF2196F3</color>
-    <color name="primary_dark_color">#FF1976D2</color>
-    <color name="accent_color">#FF03DAC5</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
 
-    <!-- Status Colors -->
-    <color name="status_present">#FF4CAF50</color>
-    <color name="status_absent">#FFF44336</color>
-    <color name="status_in">#FF2196F3</color>
-    <color name="status_out">#FFFF9800</color>
-
-    <!-- Background Colors -->
-    <color name="background_light">#FFFAFAFA</color>
-    <color name="card_background">#FFFFFFFF</color>
-
-    <!-- Text Colors -->
-    <color name="text_primary">#DE000000</color>
-    <color name="text_secondary">#8A000000</color>
-    <color name="text_hint">#61000000</color>
+    <!-- Add these new colors for the toolbar and buttons -->
+    <color name="check_in_color">#2E7D32</color>
+    <color name="check_out_color">#E65100</color>
+    <color name="capture_color">#1976D2</color>
+    <color name="register_color">#2E7D32</color>
 </resources>
