@@ -3,41 +3,39 @@ package com.example.facedetectionapp;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
+import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.util.Log;
-
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
-import java.util.Locale;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String TAG = "DatabaseHelper";
-    private static final String DATABASE_NAME = "attendance.db";
-    private static final int DATABASE_VERSION = 3; // Updated to fix version conflict
 
-    // Tables
+    // Database constants
+    private static final String DATABASE_NAME = "FaceDetectionApp.db";
+    private static final int DATABASE_VERSION = 4;
+
+    // Table names
     private static final String TABLE_PERSONS = "persons";
     private static final String TABLE_ATTENDANCE = "attendance";
 
-    // Person table columns
-    private static final String PERSON_ID = "id";
-    private static final String PERSON_NAME = "name";
-    private static final String PERSON_EMPLOYEE_ID = "employee_id";
-    private static final String PERSON_FACE_EMBEDDING = "face_embedding";
-    private static final String PERSON_IS_ACTIVE = "is_active";
-    private static final String PERSON_CREATED_AT = "created_at";
+    // Persons table columns
+    private static final String COLUMN_ID = "id";
+    private static final String COLUMN_NAME = "name";
+    private static final String COLUMN_EMPLOYEE_ID = "employee_id";
+    private static final String COLUMN_FACE_ENCODING = "face_encoding";
+    private static final String COLUMN_IS_ACTIVE = "is_active";
+    private static final String COLUMN_CREATED_AT = "created_at";
+    private static final String COLUMN_UPDATED_AT = "updated_at";
 
     // Attendance table columns
-    private static final String ATTENDANCE_ID = "id";
-    private static final String ATTENDANCE_PERSON_ID = "person_id";
-    private static final String ATTENDANCE_ACTION_TYPE = "action_type";
-    private static final String ATTENDANCE_TIMESTAMP = "timestamp";
-    private static final String ATTENDANCE_DATE = "date";
-    private static final String ATTENDANCE_TIME = "time";
-    private static final String ATTENDANCE_CONFIDENCE = "confidence";
+    private static final String COLUMN_PERSON_ID = "person_id";
+    private static final String COLUMN_ACTION_TYPE = "action_type";
+    private static final String COLUMN_DATE = "date";
+    private static final String COLUMN_TIMESTAMP = "timestamp";
+    private static final String COLUMN_CONFIDENCE = "confidence";
 
     public DatabaseHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
@@ -46,328 +44,441 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
     @Override
     public void onCreate(SQLiteDatabase db) {
-        Log.d(TAG, "🏗️ Creating database tables");
+        Log.d(TAG, "🗄️ Creating database tables...");
 
-        // Create persons table
-        String createPersonsTable = "CREATE TABLE " + TABLE_PERSONS + " (" +
-                PERSON_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                PERSON_NAME + " TEXT NOT NULL, " +
-                PERSON_EMPLOYEE_ID + " TEXT UNIQUE NOT NULL, " +
-                PERSON_FACE_EMBEDDING + " BLOB NOT NULL, " +
-                PERSON_IS_ACTIVE + " INTEGER DEFAULT 1, " +
-                PERSON_CREATED_AT + " TEXT NOT NULL" +
-                ")";
+        try {
+            // Create persons table
+            String createPersonsTable = "CREATE TABLE " + TABLE_PERSONS + " (" +
+                    COLUMN_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COLUMN_NAME + " TEXT NOT NULL, " +
+                    COLUMN_EMPLOYEE_ID + " TEXT UNIQUE NOT NULL, " +
+                    COLUMN_FACE_ENCODING + " BLOB, " +
+                    COLUMN_IS_ACTIVE + " INTEGER DEFAULT 1, " +
+                    COLUMN_CREATED_AT + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                    COLUMN_UPDATED_AT + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                    ")";
 
-        // Create attendance table
-        String createAttendanceTable = "CREATE TABLE " + TABLE_ATTENDANCE + " (" +
-                ATTENDANCE_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                ATTENDANCE_PERSON_ID + " INTEGER NOT NULL, " +
-                ATTENDANCE_ACTION_TYPE + " TEXT NOT NULL, " +
-                ATTENDANCE_TIMESTAMP + " TEXT NOT NULL, " +
-                ATTENDANCE_DATE + " TEXT NOT NULL, " +
-                ATTENDANCE_TIME + " TEXT NOT NULL, " +
-                ATTENDANCE_CONFIDENCE + " REAL DEFAULT 0.0, " +
-                "FOREIGN KEY(" + ATTENDANCE_PERSON_ID + ") REFERENCES " + TABLE_PERSONS + "(" + PERSON_ID + ")" +
-                ")";
+            db.execSQL(createPersonsTable);
+            Log.d(TAG, "✅ Persons table created successfully");
 
-        db.execSQL(createPersonsTable);
-        db.execSQL(createAttendanceTable);
+            // Create attendance table
+            String createAttendanceTable = "CREATE TABLE " + TABLE_ATTENDANCE + " (" +
+                    COLUMN_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    COLUMN_PERSON_ID + " INTEGER NOT NULL, " +
+                    COLUMN_ACTION_TYPE + " TEXT NOT NULL, " +
+                    COLUMN_DATE + " TEXT NOT NULL, " +
+                    COLUMN_TIMESTAMP + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                    COLUMN_CONFIDENCE + " REAL, " +
+                    "FOREIGN KEY(" + COLUMN_PERSON_ID + ") REFERENCES " + TABLE_PERSONS + "(" + COLUMN_ID + ")" +
+                    ")";
 
-        Log.d(TAG, "✅ Database tables created successfully");
+            db.execSQL(createAttendanceTable);
+            Log.d(TAG, "✅ Attendance table created successfully");
+
+            // Create indexes for better performance
+            db.execSQL("CREATE INDEX idx_persons_employee_id ON " + TABLE_PERSONS + "(" + COLUMN_EMPLOYEE_ID + ")");
+            db.execSQL("CREATE INDEX idx_attendance_person_date ON " + TABLE_ATTENDANCE + "(" + COLUMN_PERSON_ID + ", " + COLUMN_DATE + ")");
+            Log.d(TAG, "✅ Database indexes created successfully");
+
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error creating tables", e);
+        }
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         Log.d(TAG, "🔄 Upgrading database from version " + oldVersion + " to " + newVersion);
 
-        // Handle version upgrades more gracefully
-        if (oldVersion < 3) {
-            // If upgrading from version 2 to 3, just recreate tables
-            // In a production app, you'd want to migrate data instead
-            Log.d(TAG, "🔄 Recreating tables for version 3");
+        try {
+            if (oldVersion < 2) {
+                // Add action_type column if upgrading from version 1
+                db.execSQL("ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COLUMN_ACTION_TYPE + " TEXT DEFAULT 'check_in'");
+                Log.d(TAG, "✅ Added action_type column to attendance table");
+            }
 
-            // Drop existing tables
-            db.execSQL("DROP TABLE IF EXISTS " + TABLE_ATTENDANCE);
-            db.execSQL("DROP TABLE IF EXISTS " + TABLE_PERSONS);
+            if (oldVersion < 3) {
+                // Create persons table if upgrading from version 2
+                String createPersonsTable = "CREATE TABLE IF NOT EXISTS " + TABLE_PERSONS + " (" +
+                        COLUMN_ID + " INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                        COLUMN_NAME + " TEXT NOT NULL, " +
+                        COLUMN_EMPLOYEE_ID + " TEXT UNIQUE NOT NULL, " +
+                        COLUMN_FACE_ENCODING + " BLOB, " +
+                        COLUMN_IS_ACTIVE + " INTEGER DEFAULT 1, " +
+                        COLUMN_CREATED_AT + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
+                        COLUMN_UPDATED_AT + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
+                        ")";
+                db.execSQL(createPersonsTable);
+                Log.d(TAG, "✅ Created persons table during upgrade");
+            }
 
-            // Recreate tables
-            onCreate(db);
+            if (oldVersion < 4) {
+                // Add confidence column to attendance table
+                try {
+                    db.execSQL("ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COLUMN_CONFIDENCE + " REAL");
+                    Log.d(TAG, "✅ Added confidence column to attendance table");
+                } catch (SQLException e) {
+                    Log.w(TAG, "⚠️ Confidence column might already exist");
+                }
+
+                // Create indexes
+                try {
+                    db.execSQL("CREATE INDEX IF NOT EXISTS idx_persons_employee_id ON " + TABLE_PERSONS + "(" + COLUMN_EMPLOYEE_ID + ")");
+                    db.execSQL("CREATE INDEX IF NOT EXISTS idx_attendance_person_date ON " + TABLE_ATTENDANCE + "(" + COLUMN_PERSON_ID + ", " + COLUMN_DATE + ")");
+                    Log.d(TAG, "✅ Created database indexes during upgrade");
+                } catch (SQLException e) {
+                    Log.w(TAG, "⚠️ Some indexes might already exist");
+                }
+            }
+
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error during database upgrade", e);
         }
-
-        Log.d(TAG, "✅ Database upgrade completed");
     }
 
-    // Person operations
-    public synchronized long addPerson(String name, String employeeId, byte[] faceEmbedding) {
+    // ==================== PERSON METHODS ====================
+
+    /**
+     * Save a new person with face encoding
+     */
+    public boolean savePerson(String name, String employeeId, byte[] faceEncoding) {
         SQLiteDatabase db = null;
         try {
             db = this.getWritableDatabase();
             ContentValues values = new ContentValues();
-            values.put(PERSON_NAME, name);
-            values.put(PERSON_EMPLOYEE_ID, employeeId);
-            values.put(PERSON_FACE_EMBEDDING, faceEmbedding);
-            values.put(PERSON_IS_ACTIVE, 1);
-            values.put(PERSON_CREATED_AT, getCurrentTimestamp());
+            values.put(COLUMN_NAME, name);
+            values.put(COLUMN_EMPLOYEE_ID, employeeId);
+            values.put(COLUMN_FACE_ENCODING, faceEncoding);
+            values.put(COLUMN_IS_ACTIVE, 1);
 
             long result = db.insert(TABLE_PERSONS, null, values);
+
             if (result != -1) {
-                Log.d(TAG, "✅ Person added: " + name + " (ID: " + employeeId + ")");
+                Log.d(TAG, "✅ Person saved successfully: " + name + " (ID: " + result + ")");
+                return true;
             } else {
-                Log.e(TAG, "❌ Failed to add person: " + name);
+                Log.e(TAG, "❌ Failed to save person: " + name);
+                return false;
             }
-            return result;
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error adding person: " + e.getMessage());
-            return -1;
+
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error saving person: " + name, e);
+            return false;
         } finally {
-            // Don't close db here as it's managed by the helper
+            if (db != null && db.isOpen()) {
+                db.close();
+            }
         }
     }
 
-    public synchronized List<Person> getAllPersons() {
+    /**
+     * Get all active persons
+     */
+    public List<Person> getAllPersons() {
         List<Person> persons = new ArrayList<>();
         SQLiteDatabase db = null;
         Cursor cursor = null;
 
         try {
             db = this.getReadableDatabase();
-            cursor = db.query(TABLE_PERSONS, null, PERSON_IS_ACTIVE + "=1", null, null, null, PERSON_NAME + " ASC");
+            String query = "SELECT * FROM " + TABLE_PERSONS + " WHERE " + COLUMN_IS_ACTIVE + "=1 ORDER BY " + COLUMN_NAME + " ASC";
+            cursor = db.rawQuery(query, null);
 
-            while (cursor.moveToNext()) {
-                Person person = new Person();
-                person.id = cursor.getLong(cursor.getColumnIndexOrThrow(PERSON_ID));
-                person.name = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_NAME));
-                person.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_EMPLOYEE_ID));
-                person.embedding = cursor.getBlob(cursor.getColumnIndexOrThrow(PERSON_FACE_EMBEDDING));
-                person.isActive = cursor.getInt(cursor.getColumnIndexOrThrow(PERSON_IS_ACTIVE)) == 1;
-                person.createdAt = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_CREATED_AT));
-                persons.add(person);
+            if (cursor.moveToFirst()) {
+                do {
+                    Person person = new Person();
+                    person.id = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_ID));
+                    person.name = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_NAME));
+                    person.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMPLOYEE_ID));
+                    person.faceEncoding = cursor.getBlob(cursor.getColumnIndexOrThrow(COLUMN_FACE_ENCODING));
+                    person.isActive = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_IS_ACTIVE)) == 1;
+                    persons.add(person);
+                } while (cursor.moveToNext());
             }
 
             Log.d(TAG, "📊 Retrieved " + persons.size() + " active persons");
             return persons;
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error getting all persons: " + e.getMessage());
-            return new ArrayList<>();
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error getting all persons", e);
+            return persons;
         } finally {
-            if (cursor != null && !cursor.isClosed()) {
+            if (cursor != null) {
                 cursor.close();
             }
-            // Don't close db here as it's managed by the helper
+            if (db != null && db.isOpen()) {
+                db.close();
+            }
         }
     }
 
-    public synchronized Person getPersonByEmployeeId(String employeeId) {
+    /**
+     * Get person by employee ID
+     */
+    public Person getPersonByEmployeeId(String employeeId) {
         SQLiteDatabase db = null;
         Cursor cursor = null;
 
         try {
             db = this.getReadableDatabase();
-            cursor = db.query(TABLE_PERSONS, null, PERSON_EMPLOYEE_ID + "=? AND " + PERSON_IS_ACTIVE + "=1",
-                    new String[]{employeeId}, null, null, null);
+            String query = "SELECT * FROM " + TABLE_PERSONS + " WHERE " + COLUMN_EMPLOYEE_ID + "=? AND " + COLUMN_IS_ACTIVE + "=1";
+            cursor = db.rawQuery(query, new String[]{employeeId});
 
             if (cursor.moveToFirst()) {
                 Person person = new Person();
-                person.id = cursor.getLong(cursor.getColumnIndexOrThrow(PERSON_ID));
-                person.name = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_NAME));
-                person.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_EMPLOYEE_ID));
-                person.embedding = cursor.getBlob(cursor.getColumnIndexOrThrow(PERSON_FACE_EMBEDDING));
-                person.isActive = cursor.getInt(cursor.getColumnIndexOrThrow(PERSON_IS_ACTIVE)) == 1;
-                person.createdAt = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_CREATED_AT));
+                person.id = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_ID));
+                person.name = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_NAME));
+                person.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMPLOYEE_ID));
+                person.faceEncoding = cursor.getBlob(cursor.getColumnIndexOrThrow(COLUMN_FACE_ENCODING));
+                person.isActive = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_IS_ACTIVE)) == 1;
                 return person;
             }
+
             return null;
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error getting person by employee ID: " + e.getMessage());
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error getting person by employee ID: " + employeeId, e);
             return null;
         } finally {
-            if (cursor != null && !cursor.isClosed()) {
+            if (cursor != null) {
                 cursor.close();
+            }
+            if (db != null && db.isOpen()) {
+                db.close();
             }
         }
     }
 
-    // Attendance operations
-    public synchronized long addAttendance(long personId, String actionType, double confidence) {
+    /**
+     * Update person's face encoding
+     */
+    public boolean updatePersonFaceEncoding(int personId, byte[] faceEncoding) {
         SQLiteDatabase db = null;
         try {
             db = this.getWritableDatabase();
-            String timestamp = getCurrentTimestamp();
-            String date = getCurrentDate();
-            String time = getCurrentTime();
-
             ContentValues values = new ContentValues();
-            values.put(ATTENDANCE_PERSON_ID, personId);
-            values.put(ATTENDANCE_ACTION_TYPE, actionType);
-            values.put(ATTENDANCE_TIMESTAMP, timestamp);
-            values.put(ATTENDANCE_DATE, date);
-            values.put(ATTENDANCE_TIME, time);
-            values.put(ATTENDANCE_CONFIDENCE, confidence);
+            values.put(COLUMN_FACE_ENCODING, faceEncoding);
+            values.put(COLUMN_UPDATED_AT, System.currentTimeMillis());
 
-            long result = db.insert(TABLE_ATTENDANCE, null, values);
-            if (result != -1) {
-                Log.d(TAG, "✅ Attendance recorded: " + actionType + " for person ID " + personId);
+            int result = db.update(TABLE_PERSONS, values, COLUMN_ID + "=?", new String[]{String.valueOf(personId)});
+
+            if (result > 0) {
+                Log.d(TAG, "✅ Person face encoding updated successfully: " + personId);
+                return true;
+            } else {
+                Log.e(TAG, "❌ Failed to update person face encoding: " + personId);
+                return false;
             }
-            return result;
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error adding attendance: " + e.getMessage());
-            return -1;
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error updating person face encoding: " + personId, e);
+            return false;
         } finally {
-            // Don't close db here as it's managed by the helper
+            if (db != null && db.isOpen()) {
+                db.close();
+            }
         }
     }
 
-    public synchronized Stats getTodayStats() {
+    /**
+     * Delete person (soft delete - mark as inactive)
+     */
+    public boolean deletePerson(int personId) {
+        SQLiteDatabase db = null;
+        try {
+            db = this.getWritableDatabase();
+            ContentValues values = new ContentValues();
+            values.put(COLUMN_IS_ACTIVE, 0);
+            values.put(COLUMN_UPDATED_AT, System.currentTimeMillis());
+
+            int result = db.update(TABLE_PERSONS, values, COLUMN_ID + "=?", new String[]{String.valueOf(personId)});
+
+            if (result > 0) {
+                Log.d(TAG, "✅ Person deleted successfully: " + personId);
+                return true;
+            } else {
+                Log.e(TAG, "❌ Failed to delete person: " + personId);
+                return false;
+            }
+
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error deleting person: " + personId, e);
+            return false;
+        } finally {
+            if (db != null && db.isOpen()) {
+                db.close();
+            }
+        }
+    }
+
+    // ==================== ATTENDANCE METHODS ====================
+
+    /**
+     * Record attendance
+     */
+    public boolean recordAttendance(int personId, String actionType, float confidence) {
+        SQLiteDatabase db = null;
+        try {
+            db = this.getWritableDatabase();
+
+            String today = java.text.DateFormat.getDateInstance().format(new java.util.Date());
+
+            ContentValues values = new ContentValues();
+            values.put(COLUMN_PERSON_ID, personId);
+            values.put(COLUMN_ACTION_TYPE, actionType);
+            values.put(COLUMN_DATE, today);
+            values.put(COLUMN_CONFIDENCE, confidence);
+
+            long result = db.insert(TABLE_ATTENDANCE, null, values);
+
+            if (result != -1) {
+                Log.d(TAG, "✅ Attendance recorded successfully: Person " + personId + " - " + actionType);
+                return true;
+            } else {
+                Log.e(TAG, "❌ Failed to record attendance: Person " + personId);
+                return false;
+            }
+
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error recording attendance", e);
+            return false;
+        } finally {
+            if (db != null && db.isOpen()) {
+                db.close();
+            }
+        }
+    }
+
+    /**
+     * Get today's attendance statistics
+     */
+    public Stats getTodaysStats() {
         SQLiteDatabase db = null;
         Cursor cursor = null;
+
         try {
             db = this.getReadableDatabase();
-            String today = getCurrentDate();
+            String today = java.text.DateFormat.getDateInstance().format(new java.util.Date());
 
-            String query = "SELECT " + ATTENDANCE_ACTION_TYPE + ", COUNT(*) as count FROM " + TABLE_ATTENDANCE +
-                    " WHERE " + ATTENDANCE_DATE + " = ? GROUP BY " + ATTENDANCE_ACTION_TYPE;
+            String query = "SELECT " + COLUMN_ACTION_TYPE + ", COUNT(*) as count FROM " + TABLE_ATTENDANCE +
+                    " WHERE " + COLUMN_DATE + " = ? GROUP BY " + COLUMN_ACTION_TYPE;
             cursor = db.rawQuery(query, new String[]{today});
 
             int checkedIn = 0;
             int checkedOut = 0;
 
-            while (cursor.moveToNext()) {
-                String actionType = cursor.getString(0);
-                int count = cursor.getInt(1);
+            if (cursor.moveToFirst()) {
+                do {
+                    String actionType = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_ACTION_TYPE));
+                    int count = cursor.getInt(cursor.getColumnIndexOrThrow("count"));
 
-                if ("CHECK_IN".equals(actionType)) {
-                    checkedIn = count;
-                } else if ("CHECK_OUT".equals(actionType)) {
-                    checkedOut = count;
-                }
+                    if ("check_in".equals(actionType)) {
+                        checkedIn = count;
+                    } else if ("check_out".equals(actionType)) {
+                        checkedOut = count;
+                    }
+                } while (cursor.moveToNext());
             }
 
             int total = checkedIn + checkedOut;
-            int present = checkedIn - checkedOut;
-            if (present < 0) present = 0;
+            int present = Math.max(0, checkedIn - checkedOut); // People currently present
 
             Stats stats = new Stats(total, checkedIn, checkedOut, present);
-            Log.d(TAG, "📊 Today's stats: " + stats);
+            Log.d(TAG, "📊 Today's stats: " + stats.toString());
             return stats;
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error getting today's stats: " + e.getMessage());
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error getting today's stats", e);
             return new Stats(0, 0, 0, 0);
         } finally {
-            if (cursor != null && !cursor.isClosed()) {
+            if (cursor != null) {
                 cursor.close();
             }
-            // Don't close db here as it's managed by the helper
+            if (db != null && db.isOpen()) {
+                db.close();
+            }
         }
     }
 
-    public synchronized List<AttendanceRecord> getAttendanceByDate(String date) {
+    /**
+     * Get attendance records for a specific date
+     */
+    public List<AttendanceRecord> getAttendanceByDate(String date) {
         List<AttendanceRecord> records = new ArrayList<>();
         SQLiteDatabase db = null;
         Cursor cursor = null;
 
         try {
             db = this.getReadableDatabase();
-            String query = "SELECT a.*, p." + PERSON_NAME + ", p." + PERSON_EMPLOYEE_ID +
+            String query = "SELECT a.*, p." + COLUMN_NAME + ", p." + COLUMN_EMPLOYEE_ID +
                     " FROM " + TABLE_ATTENDANCE + " a" +
-                    " JOIN " + TABLE_PERSONS + " p ON a." + ATTENDANCE_PERSON_ID + " = p." + PERSON_ID +
-                    " WHERE a." + ATTENDANCE_DATE + " = ?" +
-                    " ORDER BY a." + ATTENDANCE_TIMESTAMP + " DESC";
+                    " JOIN " + TABLE_PERSONS + " p ON a." + COLUMN_PERSON_ID + " = p." + COLUMN_ID +
+                    " WHERE a." + COLUMN_DATE + " = ?" +
+                    " ORDER BY a." + COLUMN_TIMESTAMP + " DESC";
 
             cursor = db.rawQuery(query, new String[]{date});
 
-            while (cursor.moveToNext()) {
-                AttendanceRecord record = new AttendanceRecord();
-                record.id = cursor.getLong(cursor.getColumnIndexOrThrow(ATTENDANCE_ID));
-                record.personId = cursor.getLong(cursor.getColumnIndexOrThrow(ATTENDANCE_PERSON_ID));
-                record.personName = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_NAME));
-                record.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(PERSON_EMPLOYEE_ID));
-                record.actionType = cursor.getString(cursor.getColumnIndexOrThrow(ATTENDANCE_ACTION_TYPE));
-                record.timestamp = cursor.getString(cursor.getColumnIndexOrThrow(ATTENDANCE_TIMESTAMP));
-                record.date = cursor.getString(cursor.getColumnIndexOrThrow(ATTENDANCE_DATE));
-                record.time = cursor.getString(cursor.getColumnIndexOrThrow(ATTENDANCE_TIME));
-                record.confidence = cursor.getDouble(cursor.getColumnIndexOrThrow(ATTENDANCE_CONFIDENCE));
-                records.add(record);
+            if (cursor.moveToFirst()) {
+                do {
+                    AttendanceRecord record = new AttendanceRecord();
+                    record.id = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_ID));
+                    record.personId = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_PERSON_ID));
+                    record.personName = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_NAME));
+                    record.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMPLOYEE_ID));
+                    record.actionType = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_ACTION_TYPE));
+                    record.date = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_DATE));
+                    record.timestamp = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_TIMESTAMP));
+                    record.confidence = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_CONFIDENCE));
+                    records.add(record);
+                } while (cursor.moveToNext());
             }
 
+            Log.d(TAG, "📊 Retrieved " + records.size() + " attendance records for " + date);
             return records;
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error getting attendance by date: " + e.getMessage());
-            return new ArrayList<>();
+        } catch (SQLException e) {
+            Log.e(TAG, "❌ Error getting attendance by date: " + date, e);
+            return records;
         } finally {
-            if (cursor != null && !cursor.isClosed()) {
+            if (cursor != null) {
                 cursor.close();
+            }
+            if (db != null && db.isOpen()) {
+                db.close();
             }
         }
     }
 
-    // Utility methods
-    private String getCurrentTimestamp() {
-        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date());
-    }
+    // ==================== DATA CLASSES ====================
 
-    private String getCurrentDate() {
-        return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
-    }
-
-    private String getCurrentTime() {
-        return new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
-    }
-
-    // Data classes
+    /**
+     * Person data class
+     */
     public static class Person {
-        public long id;
+        public int id;
         public String name;
         public String employeeId;
-        public byte[] embedding;
+        public byte[] faceEncoding;
         public boolean isActive;
-        public String createdAt;
+
+        public Person() {
+            this.isActive = true;
+        }
 
         @Override
         public String toString() {
-            return "Person{" +
-                    "id=" + id +
-                    ", name='" + name + '\'' +
-                    ", employeeId='" + employeeId + '\'' +
-                    ", isActive=" + isActive +
-                    ", createdAt='" + createdAt + '\'' +
-                    '}';
+            return "Person{id=" + id + ", name='" + name + "', employeeId='" + employeeId +
+                    "', isActive=" + isActive + ", hasEncoding=" + (faceEncoding != null) + "}";
         }
     }
 
-    public static class AttendanceRecord {
-        public long id;
-        public long personId;
-        public String personName;
-        public String employeeId;
-        public String actionType;
-        public String timestamp;
-        public String date;
-        public String time;
-        public double confidence;
-
-        @Override
-        public String toString() {
-            return "AttendanceRecord{" +
-                    "id=" + id +
-                    ", personName='" + personName + '\'' +
-                    ", employeeId='" + employeeId + '\'' +
-                    ", actionType='" + actionType + '\'' +
-                    ", time='" + time + '\'' +
-                    ", confidence=" + confidence +
-                    '}';
-        }
-    }
-
+    /**
+     * Attendance statistics data class
+     */
     public static class Stats {
-        public final int total;
-        public final int checkedIn;
-        public final int checkedOut;
-        public final int present;
+        public int total;
+        public int checkedIn;
+        public int checkedOut;
+        public int present;
 
         public Stats(int total, int checkedIn, int checkedOut, int present) {
             this.total = total;
@@ -378,12 +489,29 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         @Override
         public String toString() {
-            return "Stats{" +
-                    "total=" + total +
-                    ", checkedIn=" + checkedIn +
-                    ", checkedOut=" + checkedOut +
-                    ", present=" + present +
-                    '}';
+            return "Stats{total=" + total + ", checkedIn=" + checkedIn +
+                    ", checkedOut=" + checkedOut + ", present=" + present + "}";
+        }
+    }
+
+    /**
+     * Attendance record data class
+     */
+    public static class AttendanceRecord {
+        public int id;
+        public int personId;
+        public String personName;
+        public String employeeId;
+        public String actionType;
+        public String date;
+        public String timestamp;
+        public float confidence;
+
+        @Override
+        public String toString() {
+            return "AttendanceRecord{id=" + id + ", personName='" + personName +
+                    "', employeeId='" + employeeId + "', actionType='" + actionType +
+                    "', date='" + date + "', confidence=" + confidence + "}";
         }
     }
 }
