@@ -1,151 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
 
-    <!-- Toolbar for menu -->
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/toolbar"
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
-        android:background="?attr/colorPrimary"
-        android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Primary"
-        app:title="Face Attendance"
-        app:titleTextColor="@android:color/white" />
+        android:layout_height="match_parent" />
 
-    <!-- Main camera content -->
-    <FrameLayout
+    <View
+        android:id="@+id/overlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="match_parent" />
 
-        <androidx.camera.view.PreviewView
-            android:id="@+id/previewView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
 
-        <View
-            android:id="@+id/overlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-
-        <!-- Top UI Panel -->
-        <LinearLayout
-            android:layout_width="match_parent"
+        <TextView
+            android:id="@+id/faceCountText"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:background="#80000000">
+            android:text="Initializing..."
+            android:textSize="20sp"
+            android:textColor="@android:color/white"
+            android:background="#80000000"
+            android:padding="10dp" />
 
-            <TextView
-                android:id="@+id/faceCountText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Initializing..."
-                android:textSize="18sp"
-                android:textColor="@android:color/white"
-                android:background="#90000000"
-                android:padding="8dp"
-                android:drawableStart="@drawable/ic_face"
-                android:drawablePadding="8dp" />
-
-            <TextView
-                android:id="@+id/attendanceStatsText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:textSize="16sp"
-                android:textColor="@android:color/white"
-                android:background="#902196F3"
-                android:padding="8dp"
-                android:layout_marginTop="4dp"
-                android:visibility="gone" />
-
-            <TextView
-                android:id="@+id/spoofWarningText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:textSize="16sp"
-                android:textColor="@android:color/white"
-                android:background="#80FF0000"
-                android:padding="8dp"
-                android:layout_marginTop="4dp"
-                android:visibility="gone" />
-
-            <TextView
-                android:id="@+id/recognitionStatusText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:textSize="16sp"
-                android:textColor="@android:color/white"
-                android:background="#8000AA00"
-                android:padding="8dp"
-                android:layout_marginTop="4dp"
-                android:visibility="gone" />
-
-        </LinearLayout>
-
-        <!-- Bottom UI Panel -->
-        <LinearLayout
-            android:layout_width="match_parent"
+        <TextView
+            android:id="@+id/spoofWarningText"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:background="#80000000">
+            android:text=""
+            android:textSize="18sp"
+            android:textColor="@android:color/white"
+            android:background="#80FF0000"
+            android:padding="10dp"
+            android:layout_marginTop="8dp"
+            android:visibility="gone" />
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center">
+        <TextView
+            android:id="@+id/analysisInfoText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ML+Texture Analysis"
+            android:textSize="14sp"
+            android:textColor="@android:color/white"
+            android:background="#802196F3"
+            android:padding="8dp"
+            android:layout_marginTop="8dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/checkInButton"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="CHECK IN"
-                    android:textColor="@android:color/white"
-                    android:backgroundTint="#2E7D32"
-                    style="@style/Widget.MaterialComponents.Button"
-                    android:padding="12dp"
-                    android:layout_marginEnd="8dp"
-                    app:icon="@drawable/ic_login"
-                    app:iconPadding="8dp" />
+    </LinearLayout>
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/checkOutButton"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="CHECK OUT"
-                    android:textColor="@android:color/white"
-                    android:backgroundTint="#E65100"
-                    style="@style/Widget.MaterialComponents.Button"
-                    android:padding="12dp"
-                    android:layout_marginStart="8dp"
-                    app:icon="@drawable/ic_logout"
-                    app:iconPadding="8dp" />
-
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/analysisInfoText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="🤖 AI Face Recognition + Anti-Spoofing"
-                android:textSize="14sp"
-                android:textColor="@android:color/white"
-                android:background="#802196F3"
-                android:padding="8dp"
-                android:layout_marginTop="8dp"
-                android:layout_gravity="center" />
-
-        </LinearLayout>
-    </FrameLayout>
-
-</LinearLayout>
+</FrameLayout>

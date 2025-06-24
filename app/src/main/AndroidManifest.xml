@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="true" />
 
@@ -15,66 +14,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FaceDetectionApp"
         tools:targetApi="31">
-
-        <!-- Main Activity -->
         <activity
             android:name=".MainActivity"
-            android:exported="true"
-            android:screenOrientation="portrait">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Registration Activity -->
-        <activity
-            android:name=".RegistrationActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:parentActivityName=".MainActivity"
-            android:label="Register Person">
-            <meta-data
-                android:name="android.support.PARENT_ACTIVITY"
-                android:value=".MainActivity" />
-        </activity>
-
-        <!-- Attendance Records Activity -->
-        <activity
-            android:name=".AttendanceRecordsActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:parentActivityName=".MainActivity"
-            android:label="Attendance Records">
-            <meta-data
-                android:name="android.support.PARENT_ACTIVITY"
-                android:value=".MainActivity" />
-        </activity>
-
-        <!-- Manage Persons Activity -->
-        <activity
-            android:name=".ManagePersonsActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:parentActivityName=".MainActivity"
-            android:label="Manage Persons">
-            <meta-data
-                android:name="android.support.PARENT_ACTIVITY"
-                android:value=".MainActivity" />
-        </activity>
-
-        <!-- Person Attendance Activity -->
-        <activity
-            android:name=".PersonAttendanceActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:parentActivityName=".ManagePersonsActivity"
-            android:label="Person Attendance">
-            <meta-data
-                android:name="android.support.PARENT_ACTIVITY"
-                android:value=".ManagePersonsActivity" />
-        </activity>
-
     </application>
 
 </manifest>
