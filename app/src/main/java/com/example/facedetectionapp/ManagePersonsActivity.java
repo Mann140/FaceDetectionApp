@@ -1,26 +1,40 @@
 package com.example.facedetectionapp;
 
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Button;
 import android.util.Log;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
 
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import java.util.ArrayList;
 import java.util.List;
 
-public class ManagePersonsActivity extends AppCompatActivity {
+public class ManagePersonsActivity extends AppCompatActivity implements PersonsAdapter.OnPersonActionListener {
     private static final String TAG = "ManagePersonsActivity";
 
     private DatabaseHelper databaseHelper;
-    private LinearLayout mainLayout;
+    private RecyclerView recyclerView;
+    private PersonsAdapter adapter;
+    private TextView emptyView;
+    private ProgressBar progressBar;
+
+    private List<DatabaseHelper.Person> persons;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_manage_persons);
+
+        Log.d(TAG, "🚀 ManagePersonsActivity started");
 
         // Initialize database
         databaseHelper = new DatabaseHelper(this);
@@ -31,171 +45,203 @@ public class ManagePersonsActivity extends AppCompatActivity {
             getSupportActionBar().setTitle("Manage Persons");
         }
 
-        createLayout();
+        initializeViews();
+        setupRecyclerView();
         loadPersons();
     }
 
-    private void createLayout() {
-        // Create main scroll view
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(true);
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.manage_persons_menu, menu);
+        return true;
+    }
 
-        // Create main linear layout
-        mainLayout = new LinearLayout(this);
-        mainLayout.setOrientation(LinearLayout.VERTICAL);
-        mainLayout.setPadding(32, 32, 32, 32);
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
 
-        // Add header
-        TextView headerView = new TextView(this);
-        headerView.setText("👥 Registered Persons");
-        headerView.setTextSize(24);
-        headerView.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        headerView.setPadding(0, 0, 0, 24);
-        headerView.setTypeface(null, android.graphics.Typeface.BOLD);
-        mainLayout.addView(headerView);
+        if (id == R.id.menu_add_person) {
+            openRegistrationActivity();
+            return true;
+        } else if (id == R.id.menu_refresh) {
+            refreshPersons();
+            return true;
+        }
 
-        scrollView.addView(mainLayout);
-        setContentView(scrollView);
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void initializeViews() {
+        recyclerView = findViewById(R.id.personsRecyclerView);
+        emptyView = findViewById(R.id.emptyView);
+        progressBar = findViewById(R.id.progressBar);
+
+        persons = new ArrayList<>();
+    }
+
+    private void setupRecyclerView() {
+        adapter = new PersonsAdapter(this, persons, this);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setAdapter(adapter);
     }
 
     private void loadPersons() {
-        try {
-            List<DatabaseHelper.Person> persons = databaseHelper.getAllPersons();
+        showProgress(true);
 
-            if (persons.isEmpty()) {
-                addEmptyMessage();
-            } else {
-                for (DatabaseHelper.Person person : persons) {
-                    addPersonCard(person);
-                }
+        new Thread(() -> {
+            try {
+                List<DatabaseHelper.Person> loadedPersons = databaseHelper.getAllPersons();
+
+                runOnUiThread(() -> {
+                    persons.clear();
+                    persons.addAll(loadedPersons);
+                    adapter.updatePersons(persons);
+
+                    updateEmptyView();
+                    showProgress(false);
+
+                    Log.d(TAG, "📊 Loaded " + loadedPersons.size() + " persons");
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error loading persons", e);
+                runOnUiThread(() -> {
+                    showError("Error loading persons: " + e.getMessage());
+                    showProgress(false);
+                });
             }
+        }).start();
+    }
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error loading persons: " + e.getMessage());
-            addErrorMessage("❌ Error loading persons: " + e.getMessage());
+    private void refreshPersons() {
+        Log.d(TAG, "🔄 Refreshing persons list");
+        loadPersons();
+    }
+
+    private void updateEmptyView() {
+        if (persons.isEmpty()) {
+            emptyView.setVisibility(View.VISIBLE);
+            recyclerView.setVisibility(View.GONE);
+            emptyView.setText("👥 No registered persons found\n\nUse the + button to register someone");
+        } else {
+            emptyView.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.VISIBLE);
         }
     }
 
-    private void addPersonCard(DatabaseHelper.Person person) {
-        // Create card layout
-        LinearLayout cardLayout = new LinearLayout(this);
-        cardLayout.setOrientation(LinearLayout.VERTICAL);
-        cardLayout.setPadding(24, 20, 24, 20);
-        cardLayout.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
+    private void showProgress(boolean show) {
+        if (progressBar != null) {
+            progressBar.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
 
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        cardParams.bottomMargin = 16;
-        cardLayout.setLayoutParams(cardParams);
-
-        // Person info layout
-        LinearLayout infoLayout = new LinearLayout(this);
-        infoLayout.setOrientation(LinearLayout.HORIZONTAL);
-        infoLayout.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        // Left side - person info
-        LinearLayout leftLayout = new LinearLayout(this);
-        leftLayout.setOrientation(LinearLayout.VERTICAL);
-        leftLayout.setLayoutParams(new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        // Name
-        TextView nameView = new TextView(this);
-        nameView.setText("👤 " + person.name);
-        nameView.setTextSize(18);
-        nameView.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        nameView.setTypeface(null, android.graphics.Typeface.BOLD);
-        leftLayout.addView(nameView);
-
-        // Employee ID
-        TextView empIdView = new TextView(this);
-        empIdView.setText("🆔 " + person.employeeId);
-        empIdView.setTextSize(14);
-        empIdView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-        empIdView.setPadding(0, 4, 0, 0);
-        leftLayout.addView(empIdView);
-
-        // Created date
-        TextView dateView = new TextView(this);
-        dateView.setText("📅 " + person.createdAt);
-        dateView.setTextSize(12);
-        dateView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-        dateView.setPadding(0, 4, 0, 0);
-        leftLayout.addView(dateView);
-
-        // Right side - buttons
-        LinearLayout buttonLayout = new LinearLayout(this);
-        buttonLayout.setOrientation(LinearLayout.VERTICAL);
-        buttonLayout.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        // View Attendance button
-        Button viewAttendanceBtn = new Button(this);
-        viewAttendanceBtn.setText("📊 View Attendance");
-        viewAttendanceBtn.setTextSize(12);
-        viewAttendanceBtn.setPadding(16, 8, 16, 8);
-        viewAttendanceBtn.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_blue_light));
-        viewAttendanceBtn.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        viewAttendanceBtn.setOnClickListener(v -> openPersonAttendance(person));
-        buttonLayout.addView(viewAttendanceBtn);
-
-        // Edit button (placeholder)
-        Button editBtn = new Button(this);
-        editBtn.setText("✏️ Edit");
-        editBtn.setTextSize(12);
-        editBtn.setPadding(16, 8, 16, 8);
-        editBtn.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_orange_light));
-        editBtn.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        editBtn.setOnClickListener(v -> editPerson(person));
-        LinearLayout.LayoutParams editParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        editParams.topMargin = 8;
-        editBtn.setLayoutParams(editParams);
-        buttonLayout.addView(editBtn);
-
-        // Assemble the card
-        infoLayout.addView(leftLayout);
-        infoLayout.addView(buttonLayout);
-        cardLayout.addView(infoLayout);
-
-        mainLayout.addView(cardLayout);
+        if (show) {
+            emptyView.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.GONE);
+        }
     }
 
-    private void openPersonAttendance(DatabaseHelper.Person person) {
-        Intent intent = new Intent(this, PersonAttendanceActivity.class);
-        intent.putExtra("person_id", person.id);
-        intent.putExtra("person_name", person.name);
-        intent.putExtra("employee_id", person.employeeId);
-        startActivity(intent);
+    private void showError(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        Log.e(TAG, "❌ " + message);
     }
 
-    private void editPerson(DatabaseHelper.Person person) {
+    private void openRegistrationActivity() {
+        try {
+            Intent intent = new Intent(this, RegistrationActivity.class);
+            startActivity(intent);
+            Log.d(TAG, "🚀 Opening Registration Activity");
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error opening Registration Activity", e);
+            Toast.makeText(this, "Error opening registration", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+
+
+    @Override
+    public void onViewAttendance(DatabaseHelper.Person person) {
+        try {
+            Intent intent = new Intent(this, PersonAttendanceActivity.class);
+            intent.putExtra("person_id", (long) person.id);
+            intent.putExtra("person_name", person.name);
+            intent.putExtra("employee_id", person.employeeId);
+            startActivity(intent);
+
+            Log.d(TAG, "🚀 Opening attendance for: " + person.name);
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error opening person attendance", e);
+            Toast.makeText(this, "Error opening attendance records", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    public void onEditPerson(DatabaseHelper.Person person) {
         // Placeholder for edit functionality
-        android.widget.Toast.makeText(this,
-                "Edit functionality for " + person.name + " coming soon!",
-                android.widget.Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "✏️ Edit functionality for " + person.name + " - Coming Soon!",
+                Toast.LENGTH_SHORT).show();
+
+        Log.d(TAG, "✏️ Edit requested for person: " + person.name);
+
+        // TODO: Implement edit person functionality
+        // You can create an EditPersonActivity or show a dialog for editing
     }
 
-    private void addEmptyMessage() {
-        TextView emptyView = new TextView(this);
-        emptyView.setText("📭 No persons registered yet\n\nUse the main screen menu to register new persons.");
-        emptyView.setTextSize(16);
-        emptyView.setPadding(24, 40, 24, 40);
-        emptyView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-        emptyView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
-        mainLayout.addView(emptyView);
+    @Override
+    public void onDeletePerson(DatabaseHelper.Person person) {
+        showDeleteConfirmation(person);
     }
 
-    private void addErrorMessage(String message) {
-        TextView errorView = new TextView(this);
-        errorView.setText(message);
-        errorView.setTextSize(16);
-        errorView.setPadding(24, 40, 24, 40);
-        errorView.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
-        errorView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
-        mainLayout.addView(errorView);
+    private void showDeleteConfirmation(DatabaseHelper.Person person) {
+        new AlertDialog.Builder(this)
+                .setTitle("Delete Person")
+                .setMessage("Are you sure you want to delete " + person.name + "?\n\n" +
+                        "This will mark them as inactive but preserve their attendance history.")
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    deletePerson(person);
+                })
+                .setNegativeButton("Cancel", null)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .show();
     }
+
+    private void deletePerson(DatabaseHelper.Person person) {
+        showProgress(true);
+
+        new Thread(() -> {
+            try {
+                boolean success = databaseHelper.deletePerson(person.id);
+
+                runOnUiThread(() -> {
+                    showProgress(false);
+
+                    if (success) {
+                        Toast.makeText(this, "✅ " + person.name + " deleted successfully",
+                                Toast.LENGTH_SHORT).show();
+
+                        // Remove from local list and update adapter
+                        persons.remove(person);
+                        adapter.updatePersons(persons);
+                        updateEmptyView();
+
+                        Log.d(TAG, "✅ Person deleted: " + person.name);
+                    } else {
+                        Toast.makeText(this, "❌ Failed to delete " + person.name,
+                                Toast.LENGTH_SHORT).show();
+                        Log.e(TAG, "❌ Failed to delete person: " + person.name);
+                    }
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error deleting person: " + person.name, e);
+                runOnUiThread(() -> {
+                    showProgress(false);
+                    showError("Error deleting person: " + e.getMessage());
+                });
+            }
+        }).start();
+    }
+
+    // ==================== LIFECYCLE METHODS ====================
 
     @Override
     public boolean onSupportNavigateUp() {
@@ -204,10 +250,18 @@ public class ManagePersonsActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // Refresh the list when returning to this activity
+        refreshPersons();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         if (databaseHelper != null) {
             databaseHelper.close();
         }
+        Log.d(TAG, "💥 ManagePersonsActivity destroyed");
     }
 }

@@ -1,27 +1,44 @@
 package com.example.facedetectionapp;
 
 import android.os.Bundle;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
 import android.util.Log;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import java.util.List;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 public class AttendanceRecordsActivity extends AppCompatActivity {
     private static final String TAG = "AttendanceRecordsActivity";
 
     private DatabaseHelper databaseHelper;
-    private LinearLayout mainLayout;
+    private RecyclerView recyclerView;
+    private AttendanceRecordsAdapter adapter;
+    private TextView emptyView;
+    private TextView dateRangeText;
+    private ProgressBar progressBar;
+
+    private List<DatabaseHelper.AttendanceRecord> attendanceRecords;
+    private String currentDateFilter = "today";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_attendance_records);
+
+        Log.d(TAG, "🚀 AttendanceRecordsActivity started");
 
         // Initialize database
         databaseHelper = new DatabaseHelper(this);
@@ -32,217 +49,276 @@ public class AttendanceRecordsActivity extends AppCompatActivity {
             getSupportActionBar().setTitle("Attendance Records");
         }
 
-        createLayout();
+        initializeViews();
+        setupRecyclerView();
         loadTodayAttendance();
     }
 
-    private void createLayout() {
-        // Create main scroll view
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(true);
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.attendance_records_menu, menu);
+        return true;
+    }
 
-        // Create main linear layout
-        mainLayout = new LinearLayout(this);
-        mainLayout.setOrientation(LinearLayout.VERTICAL);
-        mainLayout.setPadding(32, 32, 32, 32);
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
 
-        // Add header
-        TextView headerView = new TextView(this);
-        headerView.setText("📊 Today's Attendance Records");
-        headerView.setTextSize(24);
-        headerView.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        headerView.setPadding(0, 0, 0, 24);
-        headerView.setTypeface(null, android.graphics.Typeface.BOLD);
-        mainLayout.addView(headerView);
+        if (id == R.id.menu_today) {
+            loadTodayAttendance();
+            return true;
+        } else if (id == R.id.menu_yesterday) {
+            loadYesterdayAttendance();
+            return true;
+        } else if (id == R.id.menu_this_week) {
+            loadThisWeekAttendance();
+            return true;
+        } else if (id == R.id.menu_this_month) {
+            loadThisMonthAttendance();
+            return true;
+        } else if (id == R.id.menu_custom_date) {
+            Toast.makeText(this, "Custom date picker - Coming Soon", Toast.LENGTH_SHORT).show();
+            return true;
+        } else if (id == R.id.menu_export) {
+            exportAttendanceData();
+            return true;
+        }
 
-        // Add date
-        TextView dateView = new TextView(this);
-        String today = new SimpleDateFormat("EEEE, MMMM dd, yyyy", Locale.getDefault()).format(new Date());
-        dateView.setText("📅 " + today);
-        dateView.setTextSize(16);
-        dateView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-        dateView.setPadding(0, 0, 0, 32);
-        mainLayout.addView(dateView);
+        return super.onOptionsItemSelected(item);
+    }
 
-        scrollView.addView(mainLayout);
-        setContentView(scrollView);
+    private void initializeViews() {
+        recyclerView = findViewById(R.id.attendanceRecyclerView);
+        emptyView = findViewById(R.id.emptyView);
+        dateRangeText = findViewById(R.id.dateRangeText);
+        progressBar = findViewById(R.id.progressBar);
+
+        attendanceRecords = new ArrayList<>();
+    }
+
+    private void setupRecyclerView() {
+        adapter = new AttendanceRecordsAdapter(this, attendanceRecords);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setAdapter(adapter);
     }
 
     private void loadTodayAttendance() {
-        try {
-            String today = getCurrentDate();
-            List<DatabaseHelper.AttendanceRecord> records = databaseHelper.getAttendanceByDate(today);
+        currentDateFilter = "today";
+        String today = getCurrentDate();
+        updateDateRangeText("📅 Today - " + getFormattedDate(today));
+        loadAttendanceForDate(today);
+    }
 
-            if (records.isEmpty()) {
-                addEmptyMessage();
-            } else {
-                // Add summary stats
-                addSummaryStats(records);
+    private void loadYesterdayAttendance() {
+        currentDateFilter = "yesterday";
+        String yesterday = getYesterdayDate();
+        updateDateRangeText("📅 Yesterday - " + getFormattedDate(yesterday));
+        loadAttendanceForDate(yesterday);
+    }
 
-                // Add records
-                TextView recordsTitle = new TextView(this);
-                recordsTitle.setText("📋 Individual Records");
-                recordsTitle.setTextSize(18);
-                recordsTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-                recordsTitle.setPadding(0, 24, 0, 16);
-                mainLayout.addView(recordsTitle);
+    private void loadThisWeekAttendance() {
+        currentDateFilter = "week";
+        updateDateRangeText("📅 This Week");
+        loadAttendanceForDateRange(getWeekStartDate(), getCurrentDate());
+    }
 
-                for (DatabaseHelper.AttendanceRecord record : records) {
-                    addAttendanceRecord(record);
-                }
+    private void loadThisMonthAttendance() {
+        currentDateFilter = "month";
+        updateDateRangeText("📅 This Month");
+        loadAttendanceForDateRange(getMonthStartDate(), getCurrentDate());
+    }
+
+    private void loadAttendanceForDate(String date) {
+        showProgress(true);
+
+        new Thread(() -> {
+            try {
+                List<DatabaseHelper.AttendanceRecord> records = databaseHelper.getAttendanceByDate(date);
+
+                runOnUiThread(() -> {
+                    attendanceRecords.clear();
+                    attendanceRecords.addAll(records);
+                    adapter.updateRecords(attendanceRecords);
+
+                    updateEmptyView();
+                    showProgress(false);
+
+                    Log.d(TAG, "📊 Loaded " + records.size() + " records for " + date);
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error loading attendance for date: " + date, e);
+                runOnUiThread(() -> {
+                    showError("Error loading attendance records: " + e.getMessage());
+                    showProgress(false);
+                });
             }
+        }).start();
+    }
+
+    private void loadAttendanceForDateRange(String startDate, String endDate) {
+        showProgress(true);
+
+        new Thread(() -> {
+            try {
+                // For simplicity, we'll aggregate records from each day in the range
+                List<DatabaseHelper.AttendanceRecord> allRecords = new ArrayList<>();
+
+                Calendar start = Calendar.getInstance();
+                Calendar end = Calendar.getInstance();
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+
+                start.setTime(dateFormat.parse(startDate));
+                end.setTime(dateFormat.parse(endDate));
+
+                while (!start.after(end)) {
+                    String currentDate = dateFormat.format(start.getTime());
+                    List<DatabaseHelper.AttendanceRecord> dayRecords = databaseHelper.getAttendanceByDate(currentDate);
+                    allRecords.addAll(dayRecords);
+                    start.add(Calendar.DAY_OF_MONTH, 1);
+                }
+
+                runOnUiThread(() -> {
+                    attendanceRecords.clear();
+                    attendanceRecords.addAll(allRecords);
+                    adapter.updateRecords(attendanceRecords);
+
+                    updateEmptyView();
+                    showProgress(false);
+
+                    Log.d(TAG, "📊 Loaded " + allRecords.size() + " records for date range");
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error loading attendance for date range", e);
+                runOnUiThread(() -> {
+                    showError("Error loading attendance records: " + e.getMessage());
+                    showProgress(false);
+                });
+            }
+        }).start();
+    }
+
+    private void refreshCurrentData() {
+        switch (currentDateFilter) {
+            case "today":
+                loadTodayAttendance();
+                break;
+            case "yesterday":
+                loadYesterdayAttendance();
+                break;
+            case "week":
+                loadThisWeekAttendance();
+                break;
+            case "month":
+                loadThisMonthAttendance();
+                break;
+            default:
+                loadTodayAttendance();
+                break;
+        }
+    }
+
+    private void updateDateRangeText(String text) {
+        if (dateRangeText != null) {
+            dateRangeText.setText(text);
+        }
+    }
+
+    private void updateEmptyView() {
+        if (attendanceRecords.isEmpty()) {
+            emptyView.setVisibility(View.VISIBLE);
+            recyclerView.setVisibility(View.GONE);
+
+            String emptyMessage = getEmptyMessage();
+            emptyView.setText(emptyMessage);
+        } else {
+            emptyView.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private String getEmptyMessage() {
+        switch (currentDateFilter) {
+            case "today":
+                return "📭 No attendance records for today\n\nRecords will appear here when people check in or out.";
+            case "yesterday":
+                return "📭 No attendance records for yesterday\n\nYesterday was a quiet day!";
+            case "week":
+                return "📭 No attendance records for this week\n\nThis week's attendance will show up here.";
+            case "month":
+                return "📭 No attendance records for this month\n\nThis month's attendance will show up here.";
+            default:
+                return "📭 No attendance records found\n\nRecords will appear here when people check in or out.";
+        }
+    }
+
+    private void showProgress(boolean show) {
+        if (progressBar != null) {
+            progressBar.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+
+        if (show) {
+            emptyView.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.GONE);
+        }
+    }
+
+    private void showError(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        Log.e(TAG, "❌ " + message);
+    }
+
+    private void exportAttendanceData() {
+        try {
+            // Simple export notification - you can implement actual CSV export here
+            Toast.makeText(this, "📄 Export feature - Coming Soon!\nWill export " +
+                    attendanceRecords.size() + " records", Toast.LENGTH_LONG).show();
+
+            Log.d(TAG, "📄 Export requested for " + attendanceRecords.size() + " records");
 
         } catch (Exception e) {
-            Log.e(TAG, "❌ Error loading attendance records: " + e.getMessage());
-            addErrorMessage("❌ Error loading attendance records: " + e.getMessage());
+            Log.e(TAG, "❌ Error exporting data", e);
+            showError("Error exporting data: " + e.getMessage());
         }
     }
 
-    private void addSummaryStats(List<DatabaseHelper.AttendanceRecord> records) {
-        int checkIns = 0;
-        int checkOuts = 0;
-
-        for (DatabaseHelper.AttendanceRecord record : records) {
-            if ("CHECK_IN".equals(record.actionType)) {
-                checkIns++;
-            } else if ("CHECK_OUT".equals(record.actionType)) {
-                checkOuts++;
-            }
-        }
-
-        // Create stats layout
-        LinearLayout statsLayout = new LinearLayout(this);
-        statsLayout.setOrientation(LinearLayout.HORIZONTAL);
-        statsLayout.setPadding(0, 0, 0, 24);
-
-        // Check-ins
-        TextView checkInView = new TextView(this);
-        checkInView.setText("✅ Check-ins\n" + checkIns);
-        checkInView.setTextSize(14);
-        checkInView.setPadding(16, 16, 16, 16);
-        checkInView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_green_light));
-        checkInView.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        checkInView.setGravity(android.view.Gravity.CENTER);
-        checkInView.setLayoutParams(new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        // Check-outs
-        TextView checkOutView = new TextView(this);
-        checkOutView.setText("❌ Check-outs\n" + checkOuts);
-        checkOutView.setTextSize(14);
-        checkOutView.setPadding(16, 16, 16, 16);
-        checkOutView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_orange_light));
-        checkOutView.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        checkOutView.setGravity(android.view.Gravity.CENTER);
-        LinearLayout.LayoutParams checkOutParams = new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        checkOutParams.leftMargin = 16;
-        checkOutView.setLayoutParams(checkOutParams);
-
-        // Total
-        TextView totalView = new TextView(this);
-        totalView.setText("📊 Total\n" + records.size());
-        totalView.setTextSize(14);
-        totalView.setPadding(16, 16, 16, 16);
-        totalView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_blue_light));
-        totalView.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        totalView.setGravity(android.view.Gravity.CENTER);
-        LinearLayout.LayoutParams totalParams = new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        totalParams.leftMargin = 16;
-        totalView.setLayoutParams(totalParams);
-
-        statsLayout.addView(checkInView);
-        statsLayout.addView(checkOutView);
-        statsLayout.addView(totalView);
-
-        mainLayout.addView(statsLayout);
-    }
-
-    private void addAttendanceRecord(DatabaseHelper.AttendanceRecord record) {
-        LinearLayout recordLayout = new LinearLayout(this);
-        recordLayout.setOrientation(LinearLayout.VERTICAL);
-        recordLayout.setPadding(20, 16, 20, 16);
-        recordLayout.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.bottomMargin = 8;
-        recordLayout.setLayoutParams(params);
-
-        // Top row - name and action
-        LinearLayout topRow = new LinearLayout(this);
-        topRow.setOrientation(LinearLayout.HORIZONTAL);
-
-        TextView nameView = new TextView(this);
-        nameView.setText("👤 " + record.personName);
-        nameView.setTextSize(16);
-        nameView.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        nameView.setTypeface(null, android.graphics.Typeface.BOLD);
-        nameView.setLayoutParams(new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        TextView actionView = new TextView(this);
-        String actionIcon = "CHECK_IN".equals(record.actionType) ? "✅" : "❌";
-        String actionText = "CHECK_IN".equals(record.actionType) ? "Check In" : "Check Out";
-        actionView.setText(actionIcon + " " + actionText);
-        actionView.setTextSize(14);
-        actionView.setTextColor("CHECK_IN".equals(record.actionType) ?
-                ContextCompat.getColor(this, android.R.color.holo_green_dark) :
-                ContextCompat.getColor(this, android.R.color.holo_orange_dark));
-
-        topRow.addView(nameView);
-        topRow.addView(actionView);
-
-        // Bottom row - employee ID and time
-        LinearLayout bottomRow = new LinearLayout(this);
-        bottomRow.setOrientation(LinearLayout.HORIZONTAL);
-        bottomRow.setPadding(0, 4, 0, 0);
-
-        TextView empIdView = new TextView(this);
-        empIdView.setText("🆔 " + record.employeeId);
-        empIdView.setTextSize(12);
-        empIdView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-        empIdView.setLayoutParams(new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        TextView timeView = new TextView(this);
-        timeView.setText("🕐 " + record.time);
-        timeView.setTextSize(12);
-        timeView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-
-        bottomRow.addView(empIdView);
-        bottomRow.addView(timeView);
-
-        recordLayout.addView(topRow);
-        recordLayout.addView(bottomRow);
-
-        mainLayout.addView(recordLayout);
-    }
-
-    private void addEmptyMessage() {
-        TextView emptyView = new TextView(this);
-        emptyView.setText("📭 No attendance records for today\n\nRecords will appear here when people check in or out.");
-        emptyView.setTextSize(16);
-        emptyView.setPadding(24, 40, 24, 40);
-        emptyView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-        emptyView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
-        mainLayout.addView(emptyView);
-    }
-
-    private void addErrorMessage(String message) {
-        TextView errorView = new TextView(this);
-        errorView.setText(message);
-        errorView.setTextSize(16);
-        errorView.setPadding(24, 40, 24, 40);
-        errorView.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
-        errorView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
-        mainLayout.addView(errorView);
-    }
+    // ==================== DATE UTILITY METHODS ====================
 
     private String getCurrentDate() {
         return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
     }
+
+    private String getYesterdayDate() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.add(Calendar.DAY_OF_YEAR, -1);
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(calendar.getTime());
+    }
+
+    private String getWeekStartDate() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.DAY_OF_WEEK, calendar.getFirstDayOfWeek());
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(calendar.getTime());
+    }
+
+    private String getMonthStartDate() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.DAY_OF_MONTH, 1);
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(calendar.getTime());
+    }
+
+    private String getFormattedDate(String dateString) {
+        try {
+            SimpleDateFormat inputFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+            SimpleDateFormat outputFormat = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
+            Date date = inputFormat.parse(dateString);
+            return outputFormat.format(date);
+        } catch (Exception e) {
+            return dateString;
+        }
+    }
+
+    // ==================== LIFECYCLE METHODS ====================
 
     @Override
     public boolean onSupportNavigateUp() {
@@ -251,10 +327,18 @@ public class AttendanceRecordsActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // Refresh data when returning to this activity
+        refreshCurrentData();
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         if (databaseHelper != null) {
             databaseHelper.close();
         }
+        Log.d(TAG, "💥 AttendanceRecordsActivity destroyed");
     }
 }

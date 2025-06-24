@@ -1,34 +1,48 @@
 package com.example.facedetectionapp;
 
 import android.os.Bundle;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
 import android.util.Log;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import java.text.ParseException;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.Calendar;
 
 public class PersonAttendanceActivity extends AppCompatActivity {
     private static final String TAG = "PersonAttendanceActivity";
 
     private DatabaseHelper databaseHelper;
-    private LinearLayout mainLayout;
+    private RecyclerView recyclerView;
+    private AttendanceRecordsAdapter adapter;
+    private TextView emptyView;
+    private TextView personInfoText;
+    private TextView dateRangeText;
+    private ProgressBar progressBar;
+
+    private List<DatabaseHelper.AttendanceRecord> attendanceRecords;
     private long personId;
     private String personName;
     private String employeeId;
+    private String currentDateFilter = "today";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_person_attendance);
+
+        Log.d(TAG, "🚀 PersonAttendanceActivity started");
 
         // Initialize database
         databaseHelper = new DatabaseHelper(this);
@@ -38,253 +52,291 @@ public class PersonAttendanceActivity extends AppCompatActivity {
         personName = getIntent().getStringExtra("person_name");
         employeeId = getIntent().getStringExtra("employee_id");
 
-        // Setup toolbar
-        if (getSupportActionBar() != null) {
-            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
-            getSupportActionBar().setTitle("Attendance - " + (personName != null ? personName : "Unknown"));
-        }
-
-        createLayout();
-        loadAttendanceData();
-    }
-
-    private void createLayout() {
-        // Create main scroll view
-        ScrollView scrollView = new ScrollView(this);
-        scrollView.setFillViewport(true);
-
-        // Create main linear layout
-        mainLayout = new LinearLayout(this);
-        mainLayout.setOrientation(LinearLayout.VERTICAL);
-        mainLayout.setPadding(32, 32, 32, 32);
-
-        // Add person info header
-        addPersonInfoHeader();
-
-        // Add attendance summary
-        addAttendanceSummary();
-
-        // Add recent attendance section
-        addRecentAttendanceSection();
-
-        scrollView.addView(mainLayout);
-        setContentView(scrollView);
-    }
-
-    private void addPersonInfoHeader() {
-        TextView headerView = new TextView(this);
-        headerView.setText("👤 " + (personName != null ? personName : "Unknown Person"));
-        headerView.setTextSize(24);
-        headerView.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        headerView.setPadding(0, 0, 0, 16);
-        headerView.setTypeface(null, android.graphics.Typeface.BOLD);
-        mainLayout.addView(headerView);
-
-        if (employeeId != null) {
-            TextView empIdView = new TextView(this);
-            empIdView.setText("🆔 Employee ID: " + employeeId);
-            empIdView.setTextSize(16);
-            empIdView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-            empIdView.setPadding(0, 0, 0, 24);
-            mainLayout.addView(empIdView);
-        }
-    }
-
-    private void addAttendanceSummary() {
-        TextView summaryTitle = new TextView(this);
-        summaryTitle.setText("📊 Attendance Summary");
-        summaryTitle.setTextSize(20);
-        summaryTitle.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        summaryTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        summaryTitle.setPadding(0, 16, 0, 16);
-        mainLayout.addView(summaryTitle);
-
-        // Today's summary
-        TextView todayView = new TextView(this);
-        todayView.setText("📅 Today: Loading...");
-        todayView.setTextSize(16);
-        todayView.setPadding(16, 8, 16, 8);
-        todayView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_blue_light));
-        todayView.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        mainLayout.addView(todayView);
-
-        // This week summary
-        TextView weekView = new TextView(this);
-        weekView.setText("📅 This Week: Loading...");
-        weekView.setTextSize(16);
-        weekView.setPadding(16, 8, 16, 8);
-        weekView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_green_light));
-        weekView.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        LinearLayout.LayoutParams weekParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        weekParams.topMargin = 8;
-        weekView.setLayoutParams(weekParams);
-        mainLayout.addView(weekView);
-
-        // This month summary
-        TextView monthView = new TextView(this);
-        monthView.setText("📅 This Month: Loading...");
-        monthView.setTextSize(16);
-        monthView.setPadding(16, 8, 16, 8);
-        monthView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.holo_orange_light));
-        monthView.setTextColor(ContextCompat.getColor(this, android.R.color.white));
-        LinearLayout.LayoutParams monthParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        monthParams.topMargin = 8;
-        monthView.setLayoutParams(monthParams);
-        mainLayout.addView(monthView);
-    }
-
-    private void addRecentAttendanceSection() {
-        TextView recentTitle = new TextView(this);
-        recentTitle.setText("📋 Recent Attendance");
-        recentTitle.setTextSize(20);
-        recentTitle.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        recentTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        recentTitle.setPadding(0, 32, 0, 16);
-        mainLayout.addView(recentTitle);
-    }
-
-    private void loadAttendanceData() {
-        if (personId == -1) {
-            addErrorMessage("❌ Invalid person ID");
+        // Validate person data
+        if (personId == -1 || personName == null) {
+            Log.e(TAG, "❌ Invalid person data received");
+            Toast.makeText(this, "Error: Invalid person data", Toast.LENGTH_LONG).show();
+            finish();
             return;
         }
 
-        try {
-            // Load recent attendance records
-            loadRecentAttendance();
+        // Setup toolbar
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setDisplayHomeAsUpEnabled(true);
+            getSupportActionBar().setTitle("Attendance - " + personName);
+        }
 
-            // Update summary statistics
-            updateSummaryStats();
+        initializeViews();
+        setupRecyclerView();
+        updatePersonInfo();
+        loadTodayAttendance();
+    }
 
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error loading attendance data: " + e.getMessage());
-            addErrorMessage("❌ Error loading attendance data");
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.person_attendance_menu, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
+
+        if (id == R.id.menu_today) {
+            loadTodayAttendance();
+            return true;
+        } else if (id == R.id.menu_this_week) {
+            loadThisWeekAttendance();
+            return true;
+        } else if (id == R.id.menu_this_month) {
+            loadThisMonthAttendance();
+            return true;
+        } else if (id == R.id.menu_custom_date) {
+            Toast.makeText(this, "Custom date picker - Coming Soon", Toast.LENGTH_SHORT).show();
+            return true;
+        }
+
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void initializeViews() {
+        recyclerView = findViewById(R.id.attendanceRecyclerView);
+        emptyView = findViewById(R.id.emptyView);
+        personInfoText = findViewById(R.id.personInfoText);
+        dateRangeText = findViewById(R.id.dateRangeText);
+        progressBar = findViewById(R.id.progressBar);
+
+        attendanceRecords = new ArrayList<>();
+    }
+
+    private void setupRecyclerView() {
+        adapter = new AttendanceRecordsAdapter(this, attendanceRecords);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setAdapter(adapter);
+    }
+
+    private void updatePersonInfo() {
+        if (personInfoText != null) {
+            String infoText = "👤 " + personName;
+            if (employeeId != null && !employeeId.isEmpty()) {
+                infoText += " (" + employeeId + ")";
+            }
+            personInfoText.setText(infoText);
         }
     }
 
-    private void loadRecentAttendance() {
-        // Get today's attendance
+    private void loadTodayAttendance() {
+        currentDateFilter = "today";
         String today = getCurrentDate();
-        List<DatabaseHelper.AttendanceRecord> todayRecords = databaseHelper.getAttendanceByDate(today);
+        updateDateRangeText("📅 Today - " + getFormattedDate(today));
+        loadAttendanceForDate(today);
+    }
 
-        // Filter records for this person
-        boolean hasRecordsToday = false;
-        for (DatabaseHelper.AttendanceRecord record : todayRecords) {
-            if (record.personId == personId) {
-                addAttendanceRecord(record);
-                hasRecordsToday = true;
-            }
-        }
+    private void loadThisWeekAttendance() {
+        currentDateFilter = "week";
+        updateDateRangeText("📅 This Week");
+        loadAttendanceForDateRange(getWeekStartDate(), getCurrentDate());
+    }
 
-        if (!hasRecordsToday) {
-            TextView noRecordsView = new TextView(this);
-            noRecordsView.setText("📭 No attendance records for today");
-            noRecordsView.setTextSize(16);
-            noRecordsView.setPadding(16, 16, 16, 16);
-            noRecordsView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-            mainLayout.addView(noRecordsView);
-        }
+    private void loadThisMonthAttendance() {
+        currentDateFilter = "month";
+        updateDateRangeText("📅 This Month");
+        loadAttendanceForDateRange(getMonthStartDate(), getCurrentDate());
+    }
 
-        // Add yesterday's records if available
-        String yesterday = getYesterdayDate();
-        List<DatabaseHelper.AttendanceRecord> yesterdayRecords = databaseHelper.getAttendanceByDate(yesterday);
+    private void loadAttendanceForDate(String date) {
+        showProgress(true);
 
-        boolean hasYesterdayRecords = false;
-        for (DatabaseHelper.AttendanceRecord record : yesterdayRecords) {
-            if (record.personId == personId) {
-                if (!hasYesterdayRecords) {
-                    TextView yesterdayHeader = new TextView(this);
-                    yesterdayHeader.setText("📅 Yesterday (" + yesterday + ")");
-                    yesterdayHeader.setTextSize(16);
-                    yesterdayHeader.setTypeface(null, android.graphics.Typeface.BOLD);
-                    yesterdayHeader.setPadding(0, 24, 0, 8);
-                    yesterdayHeader.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-                    mainLayout.addView(yesterdayHeader);
-                    hasYesterdayRecords = true;
+        new Thread(() -> {
+            try {
+                List<DatabaseHelper.AttendanceRecord> allRecords = databaseHelper.getAttendanceByDate(date);
+
+                // Filter records for this specific person
+                List<DatabaseHelper.AttendanceRecord> personRecords = new ArrayList<>();
+                for (DatabaseHelper.AttendanceRecord record : allRecords) {
+                    if (record.personId == personId) {
+                        personRecords.add(record);
+                    }
                 }
-                addAttendanceRecord(record);
+
+                runOnUiThread(() -> {
+                    attendanceRecords.clear();
+                    attendanceRecords.addAll(personRecords);
+                    adapter.updateRecords(attendanceRecords);
+
+                    updateEmptyView();
+                    showProgress(false);
+
+                    Log.d(TAG, "📊 Loaded " + personRecords.size() + " records for " + personName + " on " + date);
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error loading attendance for person: " + personName, e);
+                runOnUiThread(() -> {
+                    showError("Error loading attendance records: " + e.getMessage());
+                    showProgress(false);
+                });
             }
+        }).start();
+    }
+
+    private void loadAttendanceForDateRange(String startDate, String endDate) {
+        showProgress(true);
+
+        new Thread(() -> {
+            try {
+                List<DatabaseHelper.AttendanceRecord> allRecords = new ArrayList<>();
+
+                Calendar start = Calendar.getInstance();
+                Calendar end = Calendar.getInstance();
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+
+                start.setTime(dateFormat.parse(startDate));
+                end.setTime(dateFormat.parse(endDate));
+
+                while (!start.after(end)) {
+                    String currentDate = dateFormat.format(start.getTime());
+                    List<DatabaseHelper.AttendanceRecord> dayRecords = databaseHelper.getAttendanceByDate(currentDate);
+
+                    // Filter for this person
+                    for (DatabaseHelper.AttendanceRecord record : dayRecords) {
+                        if (record.personId == personId) {
+                            allRecords.add(record);
+                        }
+                    }
+
+                    start.add(Calendar.DAY_OF_MONTH, 1);
+                }
+
+                runOnUiThread(() -> {
+                    attendanceRecords.clear();
+                    attendanceRecords.addAll(allRecords);
+                    adapter.updateRecords(attendanceRecords);
+
+                    updateEmptyView();
+                    showProgress(false);
+
+                    Log.d(TAG, "📊 Loaded " + allRecords.size() + " records for " + personName + " in date range");
+                });
+
+            } catch (Exception e) {
+                Log.e(TAG, "❌ Error loading attendance range for person: " + personName, e);
+                runOnUiThread(() -> {
+                    showError("Error loading attendance records: " + e.getMessage());
+                    showProgress(false);
+                });
+            }
+        }).start();
+    }
+
+    private void updateDateRangeText(String text) {
+        if (dateRangeText != null) {
+            dateRangeText.setText(text);
         }
     }
 
-    private void addAttendanceRecord(DatabaseHelper.AttendanceRecord record) {
-        LinearLayout recordLayout = new LinearLayout(this);
-        recordLayout.setOrientation(LinearLayout.HORIZONTAL);
-        recordLayout.setPadding(16, 12, 16, 12);
-        recordLayout.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
+    private void updateEmptyView() {
+        if (attendanceRecords.isEmpty()) {
+            emptyView.setVisibility(View.VISIBLE);
+            recyclerView.setVisibility(View.GONE);
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        params.topMargin = 4;
-        params.bottomMargin = 4;
-        recordLayout.setLayoutParams(params);
-
-        // Action type icon and text
-        TextView actionView = new TextView(this);
-        String actionIcon = "CHECK_IN".equals(record.actionType) ? "✅" : "❌";
-        String actionText = "CHECK_IN".equals(record.actionType) ? "Check In" : "Check Out";
-        actionView.setText(actionIcon + " " + actionText);
-        actionView.setTextSize(16);
-        actionView.setTextColor(ContextCompat.getColor(this, android.R.color.black));
-        actionView.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-
-        // Time
-        TextView timeView = new TextView(this);
-        timeView.setText("🕐 " + record.time);
-        timeView.setTextSize(14);
-        timeView.setTextColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-
-        recordLayout.addView(actionView);
-        recordLayout.addView(timeView);
-
-        mainLayout.addView(recordLayout);
-    }
-
-    private void updateSummaryStats() {
-        // This is a simplified version - in a full implementation, you'd calculate
-        // proper statistics from the database
-
-        // Update today's summary
-        TextView todayView = (TextView) mainLayout.getChildAt(3); // Assuming it's the 4th child
-        if (todayView != null) {
-            todayView.setText("📅 Today: Check attendance above");
-        }
-
-        // Update week summary
-        TextView weekView = (TextView) mainLayout.getChildAt(4);
-        if (weekView != null) {
-            weekView.setText("📅 This Week: Feature coming soon");
-        }
-
-        // Update month summary
-        TextView monthView = (TextView) mainLayout.getChildAt(5);
-        if (monthView != null) {
-            monthView.setText("📅 This Month: Feature coming soon");
+            String emptyMessage = getEmptyMessage();
+            emptyView.setText(emptyMessage);
+        } else {
+            emptyView.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.VISIBLE);
         }
     }
 
-    private void addErrorMessage(String message) {
-        TextView errorView = new TextView(this);
-        errorView.setText(message);
-        errorView.setTextSize(16);
-        errorView.setPadding(16, 16, 16, 16);
-        errorView.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark));
-        errorView.setBackgroundColor(ContextCompat.getColor(this, android.R.color.background_light));
-        mainLayout.addView(errorView);
+    private String getEmptyMessage() {
+        String personDisplayName = personName != null ? personName : "this person";
+
+        switch (currentDateFilter) {
+            case "today":
+                return "📭 No attendance records for " + personDisplayName + " today\n\nRecords will appear when they check in or out.";
+            case "week":
+                return "📭 No attendance records for " + personDisplayName + " this week\n\nThis week's attendance will show up here.";
+            case "month":
+                return "📭 No attendance records for " + personDisplayName + " this month\n\nThis month's attendance will show up here.";
+            default:
+                return "📭 No attendance records found for " + personDisplayName + "\n\nRecords will appear when they check in or out.";
+        }
     }
 
-    // Utility methods
+    private void showProgress(boolean show) {
+        if (progressBar != null) {
+            progressBar.setVisibility(show ? View.VISIBLE : View.GONE);
+        }
+
+        if (show) {
+            emptyView.setVisibility(View.GONE);
+            recyclerView.setVisibility(View.GONE);
+        }
+    }
+
+    private void showError(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        Log.e(TAG, "❌ " + message);
+    }
+
+    // ==================== DATE UTILITY METHODS ====================
+
     private String getCurrentDate() {
         return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
     }
 
-    private String getYesterdayDate() {
+    private String getWeekStartDate() {
         Calendar calendar = Calendar.getInstance();
-        calendar.add(Calendar.DAY_OF_YEAR, -1);
+        calendar.set(Calendar.DAY_OF_WEEK, calendar.getFirstDayOfWeek());
         return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(calendar.getTime());
     }
+
+    private String getMonthStartDate() {
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.DAY_OF_MONTH, 1);
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(calendar.getTime());
+    }
+
+    private String getFormattedDate(String dateString) {
+        try {
+            SimpleDateFormat inputFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+            SimpleDateFormat outputFormat = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
+            Date date = inputFormat.parse(dateString);
+            return outputFormat.format(date);
+        } catch (Exception e) {
+            return dateString;
+        }
+    }
+
+    // ==================== ANALYTICS METHODS ====================
+
+    private void calculateAttendanceStats() {
+        if (attendanceRecords.isEmpty()) {
+            return;
+        }
+
+        try {
+            int checkIns = 0;
+            int checkOuts = 0;
+            int totalHours = 0; // You can implement hour calculation logic
+
+            for (DatabaseHelper.AttendanceRecord record : attendanceRecords) {
+                if ("check_in".equals(record.actionType.toLowerCase())) {
+                    checkIns++;
+                } else if ("check_out".equals(record.actionType.toLowerCase())) {
+                    checkOuts++;
+                }
+            }
+
+            // You can display these stats in a summary view
+            Log.d(TAG, "📊 Stats for " + personName + " - Check-ins: " + checkIns + ", Check-outs: " + checkOuts);
+
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error calculating attendance stats", e);
+        }
+    }
+
+    // ==================== LIFECYCLE METHODS ====================
 
     @Override
     public boolean onSupportNavigateUp() {
@@ -293,10 +345,35 @@ public class PersonAttendanceActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        // Refresh current data when returning to this activity
+        refreshCurrentData();
+    }
+
+    private void refreshCurrentData() {
+        switch (currentDateFilter) {
+            case "today":
+                loadTodayAttendance();
+                break;
+            case "week":
+                loadThisWeekAttendance();
+                break;
+            case "month":
+                loadThisMonthAttendance();
+                break;
+            default:
+                loadTodayAttendance();
+                break;
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         super.onDestroy();
         if (databaseHelper != null) {
             databaseHelper.close();
         }
+        Log.d(TAG, "💥 PersonAttendanceActivity destroyed");
     }
 }

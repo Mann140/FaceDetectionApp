@@ -10,30 +10,26 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
-import java.text.SimpleDateFormat;
 import java.util.List;
-import java.util.Locale;
 
 public class PersonsAdapter extends RecyclerView.Adapter<PersonsAdapter.ViewHolder> {
     private Context context;
-    private List<Person> persons;
+    private List<DatabaseHelper.Person> persons;  // Changed to DatabaseHelper.Person
     private OnPersonActionListener listener;
-    private SimpleDateFormat dateFormat;
 
     public interface OnPersonActionListener {
-        void onViewAttendance(Person person);
-        void onEditPerson(Person person);
-        void onDeletePerson(Person person);
+        void onViewAttendance(DatabaseHelper.Person person);  // Changed to DatabaseHelper.Person
+        void onEditPerson(DatabaseHelper.Person person);     // Changed to DatabaseHelper.Person
+        void onDeletePerson(DatabaseHelper.Person person);   // Changed to DatabaseHelper.Person
     }
 
-    public PersonsAdapter(Context context, List<Person> persons, OnPersonActionListener listener) {
+    public PersonsAdapter(Context context, List<DatabaseHelper.Person> persons, OnPersonActionListener listener) {
         this.context = context;
         this.persons = persons;
         this.listener = listener;
-        this.dateFormat = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
     }
 
-    public void updatePersons(List<Person> newPersons) {
+    public void updatePersons(List<DatabaseHelper.Person> newPersons) {  // Changed to DatabaseHelper.Person
         this.persons = newPersons;
         notifyDataSetChanged();
     }
@@ -47,35 +43,26 @@ public class PersonsAdapter extends RecyclerView.Adapter<PersonsAdapter.ViewHold
 
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-        Person person = persons.get(position);
+        DatabaseHelper.Person person = persons.get(position);  // Changed to DatabaseHelper.Person
 
         // Set person info
         holder.nameText.setText(person.name);
         holder.employeeIdText.setText("ID: " + person.employeeId);
-        holder.registrationDateText.setText("Registered: " + dateFormat.format(person.getRegistrationDate()));
+        holder.registrationDateText.setText("Registered: " + person.getFormattedCreatedDate());
 
-        // Set additional info if available
-        if (person.department != null && !person.department.isEmpty()) {
-            holder.departmentText.setText("Dept: " + person.department);
-            holder.departmentText.setVisibility(View.VISIBLE);
-        } else {
-            holder.departmentText.setVisibility(View.GONE);
-        }
-
-        if (person.email != null && !person.email.isEmpty()) {
-            holder.emailText.setText(person.email);
-            holder.emailText.setVisibility(View.VISIBLE);
-        } else {
-            holder.emailText.setVisibility(View.GONE);
-        }
+        // Set additional info if available (these fields don't exist in DatabaseHelper.Person, so hide them)
+        holder.departmentText.setVisibility(View.GONE);
+        holder.emailText.setVisibility(View.GONE);
 
         // Set status
         if (person.isActive) {
             holder.statusText.setText("Active");
             holder.statusText.setTextColor(context.getResources().getColor(android.R.color.holo_green_dark));
+            holder.statusText.setBackgroundColor(context.getResources().getColor(android.R.color.background_light));
         } else {
             holder.statusText.setText("Inactive");
             holder.statusText.setTextColor(context.getResources().getColor(android.R.color.holo_red_dark));
+            holder.statusText.setBackgroundColor(context.getResources().getColor(android.R.color.background_light));
         }
 
         // Set button listeners
@@ -105,7 +92,7 @@ public class PersonsAdapter extends RecyclerView.Adapter<PersonsAdapter.ViewHold
 
     @Override
     public int getItemCount() {
-        return persons.size();
+        return persons != null ? persons.size() : 0;
     }
 
     public static class ViewHolder extends RecyclerView.ViewHolder {

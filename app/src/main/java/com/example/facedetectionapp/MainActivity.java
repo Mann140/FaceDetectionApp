@@ -3,11 +3,13 @@ package com.example.facedetectionapp;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Size;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
-import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -24,6 +26,8 @@ import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
+import com.google.android.material.appbar.MaterialToolbar;
+import com.google.android.material.button.MaterialButton;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
@@ -31,6 +35,8 @@ import com.google.mlkit.vision.face.FaceDetection;
 import com.google.mlkit.vision.face.FaceDetector;
 import com.google.mlkit.vision.face.FaceDetectorOptions;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -42,12 +48,12 @@ public class MainActivity extends AppCompatActivity {
 
     // UI Components
     private PreviewView previewView;
-    private TextView statusText;
-    private TextView recognitionText; // Optional - will be null if not in layout
-    private TextView attendanceText; // Optional - will be null if not in layout
-    private Button registerButton;
-    private Button attendanceButton; // Optional - will be null if not in layout
-    private Button manageButton; // Optional - will be null if not in layout
+    private TextView faceCountText;
+    private TextView attendanceStatsText;
+    private TextView recognitionStatusText;
+    private MaterialButton checkInButton;
+    private MaterialButton checkOutButton;
+    private FaceOverlayView overlayView;
 
     // Camera and Detection Components
     private ProcessCameraProvider cameraProvider;
@@ -72,6 +78,7 @@ public class MainActivity extends AppCompatActivity {
 
         Log.d(TAG, "🚀 MainActivity created");
 
+        setupToolbar();
         initializeComponents();
         initializeUI();
 
@@ -80,6 +87,41 @@ public class MainActivity extends AppCompatActivity {
         } else {
             ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS);
         }
+    }
+
+    private void setupToolbar() {
+        MaterialToolbar toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+        if (getSupportActionBar() != null) {
+            getSupportActionBar().setTitle("Face Attendance System");
+        }
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.main_menu, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        int id = item.getItemId();
+
+        if (id == R.id.menu_register) {
+            openRegistrationActivity();
+            return true;
+        } else if (id == R.id.menu_attendance_records) {
+            openAttendanceRecords();
+            return true;
+        } else if (id == R.id.menu_manage_persons) {
+            openManagePersons();
+            return true;
+        } else if (id == R.id.menu_settings) {
+            Toast.makeText(this, "Settings - Coming Soon", Toast.LENGTH_SHORT).show();
+            return true;
+        }
+
+        return super.onOptionsItemSelected(item);
     }
 
     private void initializeComponents() {
@@ -115,37 +157,34 @@ public class MainActivity extends AppCompatActivity {
 
     private void initializeUI() {
         try {
-            // Find UI components - some may be optional
+            // Find UI components
             previewView = findViewById(R.id.previewView);
-            statusText = findViewById(R.id.statusText);
-            registerButton = findViewById(R.id.registerButton);
+            faceCountText = findViewById(R.id.faceCountText);
+            attendanceStatsText = findViewById(R.id.attendanceStatsText);
+            recognitionStatusText = findViewById(R.id.recognitionStatusText);
+            checkInButton = findViewById(R.id.checkInButton);
+            checkOutButton = findViewById(R.id.checkOutButton);
 
-            // Optional UI elements (may not exist in your layout)
-            recognitionText = findViewById(R.id.recognitionText);
-            attendanceText = findViewById(R.id.attendanceText);
-            attendanceButton = findViewById(R.id.attendanceButton);
-            manageButton = findViewById(R.id.manageButton);
-
-            // Set initial text for existing elements
-            if (statusText != null) {
-                statusText.setText("🔍 Looking for faces...");
-            }
-            if (recognitionText != null) {
-                recognitionText.setText("👤 No face detected");
+            // Initialize overlay
+            View overlayViewRaw = findViewById(R.id.overlay);
+            if (overlayViewRaw instanceof FaceOverlayView) {
+                overlayView = (FaceOverlayView) overlayViewRaw;
             }
 
-            // Update attendance stats if element exists
+            // Set initial text
+            if (faceCountText != null) {
+                faceCountText.setText("🔍 Looking for faces...");
+            }
+
+            // Update attendance stats
             updateAttendanceStats();
 
-            // Set button click listeners for existing buttons
-            if (registerButton != null) {
-                registerButton.setOnClickListener(v -> openRegistrationActivity());
+            // Set button click listeners
+            if (checkInButton != null) {
+                checkInButton.setOnClickListener(v -> handleManualCheckIn());
             }
-            if (attendanceButton != null) {
-                attendanceButton.setOnClickListener(v -> openAttendanceRecords());
-            }
-            if (manageButton != null) {
-                manageButton.setOnClickListener(v -> openManagePersons());
+            if (checkOutButton != null) {
+                checkOutButton.setOnClickListener(v -> handleManualCheckOut());
             }
 
             Log.d(TAG, "✅ UI initialized successfully");
@@ -233,7 +272,7 @@ public class MainActivity extends AppCompatActivity {
                     })
                     .addOnFailureListener(e -> {
                         Log.e(TAG, "❌ Face detection failed", e);
-                        runOnUiThread(() -> updateUI("❌ Face detection failed", "❌ Detection Error"));
+                        runOnUiThread(() -> updateUI("❌ Face detection failed"));
                         isProcessingFrame = false;
                         imageProxy.close();
                     });
@@ -245,11 +284,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void processFaceDetectionResults(ImageProxy imageProxy, java.util.List<Face> faces) {
+    private void processFaceDetectionResults(ImageProxy imageProxy, List<Face> faces) {
         try {
             if (faces.isEmpty()) {
                 Log.d(TAG, "👻 No faces detected");
-                runOnUiThread(() -> updateUI("🔍 Looking for faces...", "👤 No face detected"));
+                runOnUiThread(() -> updateUI("🔍 Looking for faces..."));
+                clearFaceOverlay();
                 isProcessingFrame = false;
                 imageProxy.close();
                 return;
@@ -257,7 +297,7 @@ public class MainActivity extends AppCompatActivity {
 
             if (faces.size() > 1) {
                 Log.d(TAG, "👥 Multiple faces detected: " + faces.size());
-                runOnUiThread(() -> updateUI("👥 Multiple faces detected", "⚠️ Please ensure only one person"));
+                runOnUiThread(() -> updateUI("👥 Multiple faces detected - Only one person allowed"));
                 isProcessingFrame = false;
                 imageProxy.close();
                 return;
@@ -265,11 +305,11 @@ public class MainActivity extends AppCompatActivity {
 
             // Single face detected - process it
             Face face = faces.get(0);
-            Log.d(TAG, "✅ ML Kit success: 1 faces detected");
+            Log.d(TAG, "✅ ML Kit success: 1 face detected");
             Log.d(TAG, "👤 Single face detected: " + face.getBoundingBox().toString());
 
             // Update UI for face detection
-            runOnUiThread(() -> updateUI("✅ Face detected", "🔍 Analyzing..."));
+            runOnUiThread(() -> updateUI("✅ Face detected - Analyzing..."));
 
             // Perform anti-spoofing detection
             performAntiSpoofingDetection(imageProxy, face);
@@ -287,12 +327,16 @@ public class MainActivity extends AppCompatActivity {
 
             // Use the existing AntiSpoofingDetector method
             boolean isReal = antiSpoofingDetector.isRealFace(imageProxy, face);
+            String detectionMethod = isReal ? "Anti-Spoofing-Passed" : "Anti-Spoofing-Failed";
+
+            // Update the overlay
+            updateFaceOverlay(face, isReal, detectionMethod);
 
             if (isReal) {
                 Log.d(TAG, "🎯 Anti-spoofing PASSED: Real face detected");
 
                 // Update UI for anti-spoofing success
-                runOnUiThread(() -> updateUI("🎯 Real face detected", "👤 Recognizing..."));
+                runOnUiThread(() -> updateUI("🎯 Real face detected - Recognizing..."));
 
                 // Proceed to face recognition
                 performFaceRecognition(imageProxy, face);
@@ -300,14 +344,14 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 Log.d(TAG, "🚫 Anti-spoofing FAILED: Fake face detected");
 
-                runOnUiThread(() -> updateUI("🚫 Fake face detected", "❌ Spoofing attempt"));
+                runOnUiThread(() -> updateUI("🚫 Fake face detected - Spoofing attempt"));
                 isProcessingFrame = false;
                 imageProxy.close();
             }
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Error in anti-spoofing detection", e);
-            runOnUiThread(() -> updateUI("❌ Anti-spoofing error", "🔧 Please try again"));
+            runOnUiThread(() -> updateUI("❌ Anti-spoofing error - Please try again"));
             isProcessingFrame = false;
             imageProxy.close();
         }
@@ -327,40 +371,107 @@ public class MainActivity extends AppCompatActivity {
 
                 // Update current face data
                 currentFaceData.recognizedPerson = recognitionResult.person;
-                currentFaceData.confidence = recognitionResult.confidence;
+                currentFaceData.confidence = recognitionResult.confidence * 100;
                 currentFaceData.isRecognized = true;
+                currentFaceData.isReal = true;
 
                 // Update UI with recognized person
                 runOnUiThread(() -> {
-                    updateUI("✅ Face recognized",
-                            "👤 " + recognitionResult.person.name + " (" +
-                                    String.format("%.1f%%", recognitionResult.confidence * 100) + ")");
-
-                    // Auto-mark attendance for recognized person
-                    markAttendanceForPerson(recognitionResult.person, recognitionResult.confidence);
+                    updateUI("✅ Welcome " + recognitionResult.person.name + "!");
+                    updateRecognitionStatus(recognitionResult.person.name, recognitionResult.confidence);
                 });
 
             } else {
                 Log.d(TAG, "❌ Face not recognized");
                 currentFaceData.isRecognized = false;
 
-                runOnUiThread(() -> updateUI("❌ Face not recognized", "👤 Unknown person"));
+                runOnUiThread(() -> {
+                    updateUI("❌ Face not recognized - Please register first");
+                    updateRecognitionStatus("Unknown Person", 0.0f);
+                });
             }
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Error in face recognition", e);
-            runOnUiThread(() -> updateUI("❌ Recognition error", "🔧 Please try again"));
+            runOnUiThread(() -> updateUI("❌ Recognition error - Please try again"));
         } finally {
             isProcessingFrame = false;
             imageProxy.close();
         }
     }
 
-    private void markAttendanceForPerson(DatabaseHelper.Person person, float confidence) {
+    private void updateFaceOverlay(Face face, boolean isReal, String detectionMethod) {
         try {
-            // Determine attendance type (simplified logic - you can enhance this)
-            String attendanceType = determineAttendanceType(person);
+            // Create FaceData with all required fields
+            currentFaceData = new FaceData(face.getBoundingBox(), isReal, detectionMethod);
+            currentFaceData.confidence = isReal ? 85.0f : 15.0f;
+            currentFaceData.has3DStructure = isReal;
 
+            // Create list for overlay
+            List<FaceData> faceDataList = new ArrayList<>();
+            faceDataList.add(currentFaceData);
+
+            // Update overlay if it exists
+            if (overlayView != null) {
+                runOnUiThread(() -> {
+                    // Use actual camera resolution
+                    int imageWidth = 720;
+                    int imageHeight = 720;
+
+                    overlayView.setFacesWithML(faceDataList, imageWidth, imageHeight);
+                });
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error updating face overlay", e);
+        }
+    }
+
+    private void clearFaceOverlay() {
+        if (overlayView != null) {
+            runOnUiThread(() -> {
+                overlayView.setFacesWithML(new ArrayList<>(), 720, 720);
+            });
+        }
+    }
+
+    private void updateUI(String message) {
+        if (faceCountText != null) {
+            faceCountText.setText(message);
+        }
+        Log.d(TAG, "📱 UI Updated: " + message);
+    }
+
+    private void updateRecognitionStatus(String personName, float confidence) {
+        if (recognitionStatusText != null) {
+            if (confidence > 0) {
+                recognitionStatusText.setText("👤 " + personName + " (" + String.format("%.1f%%", confidence * 100) + ")");
+                recognitionStatusText.setVisibility(View.VISIBLE);
+            } else {
+                recognitionStatusText.setText("👤 " + personName);
+                recognitionStatusText.setVisibility(View.VISIBLE);
+            }
+        }
+    }
+
+    private void handleManualCheckIn() {
+        if (currentFaceData != null && currentFaceData.isRecognized && currentFaceData.recognizedPerson != null) {
+            markAttendanceForPerson(currentFaceData.recognizedPerson, "check_in", currentFaceData.confidence / 100f);
+        } else {
+            Toast.makeText(this, "Please position your face for recognition first", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void handleManualCheckOut() {
+        if (currentFaceData != null && currentFaceData.isRecognized && currentFaceData.recognizedPerson != null) {
+            markAttendanceForPerson(currentFaceData.recognizedPerson, "check_out", currentFaceData.confidence / 100f);
+        } else {
+            Toast.makeText(this, "Please position your face for recognition first", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void markAttendanceForPerson(DatabaseHelper.Person person, String attendanceType, float confidence) {
+        try {
             Log.d(TAG, "📝 Marking attendance: " + person.name + " - " + attendanceType);
 
             boolean success = faceRecognitionDetector.markAttendance(person, attendanceType, confidence);
@@ -382,53 +493,9 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private String determineAttendanceType(DatabaseHelper.Person person) {
-        // Simple logic: check if person has checked in today
-        // You can enhance this with more sophisticated logic
-        try {
-            String today = java.text.DateFormat.getDateInstance().format(new java.util.Date());
-            java.util.List<DatabaseHelper.AttendanceRecord> todayRecords =
-                    databaseHelper.getAttendanceByDate(today);
-
-            // Check if person has any records today
-            for (DatabaseHelper.AttendanceRecord record : todayRecords) {
-                if (record.personId == person.id) {
-                    // Person has records today, check the latest one
-                    if ("check_in".equals(record.actionType)) {
-                        return "check_out"; // Last action was check-in, so now check-out
-                    } else {
-                        return "check_in"; // Last action was check-out, so now check-in
-                    }
-                }
-            }
-
-            // No records today, default to check-in
-            return "check_in";
-
-        } catch (Exception e) {
-            Log.e(TAG, "❌ Error determining attendance type", e);
-            return "check_in"; // Default fallback
-        }
-    }
-
-    private void updateUI(String statusMessage, String recognitionMessage) {
-        if (statusText != null) {
-            statusText.setText(statusMessage);
-        }
-        if (recognitionText != null) {
-            recognitionText.setText(recognitionMessage);
-        }
-
-        // Log the UI update for debugging
-        Log.d(TAG, "📱 UI Updated - Status: " + statusMessage + ", Recognition: " + recognitionMessage);
-    }
-
     private void showAttendanceSuccess(String personName, String attendanceType) {
         String message = "✅ " + personName + " - " + attendanceType.replace("_", " ").toUpperCase();
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
-
-        // You can also update a status view here
-        // attendanceStatusText.setText(message);
     }
 
     private void showAttendanceError() {
@@ -444,17 +511,17 @@ public class MainActivity extends AppCompatActivity {
                     stats.checkedIn + " in | " +
                     stats.checkedOut + " out";
 
-            // Only update if the text view exists
-            if (attendanceText != null) {
-                attendanceText.setText(statsText);
+            if (attendanceStatsText != null) {
+                attendanceStatsText.setText(statsText);
+                attendanceStatsText.setVisibility(View.VISIBLE);
             }
 
             Log.d(TAG, "📊 Attendance stats updated: " + stats.toString());
 
         } catch (Exception e) {
             Log.e(TAG, "❌ Error updating attendance stats", e);
-            if (attendanceText != null) {
-                attendanceText.setText("📊 Stats unavailable");
+            if (attendanceStatsText != null) {
+                attendanceStatsText.setText("📊 Stats unavailable");
             }
         }
     }
@@ -494,7 +561,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ==================== PERMISSION HANDLING ====================
+
 
     private boolean allPermissionsGranted() {
         for (String permission : REQUIRED_PERMISSIONS) {
@@ -523,7 +590,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ==================== LIFECYCLE METHODS ====================
+
 
     @Override
     protected void onResume() {
@@ -569,6 +636,10 @@ public class MainActivity extends AppCompatActivity {
                 antiSpoofingDetector.close();
             }
 
+            if (databaseHelper != null) {
+                databaseHelper.close();
+            }
+
             Log.d(TAG, "✅ Resources cleaned up successfully");
 
         } catch (Exception e) {
@@ -579,7 +650,7 @@ public class MainActivity extends AppCompatActivity {
     // ==================== DATA CLASSES ====================
 
     /**
-     * Face data holder class
+     * Face data holder class with all required fields
      */
     public static class FaceData {
         public DatabaseHelper.Person recognizedPerson;
@@ -587,10 +658,27 @@ public class MainActivity extends AppCompatActivity {
         public boolean isRecognized;
         public long timestamp;
 
+        // Required fields for FaceOverlayView
+        public Rect boundingBox;
+        public boolean isReal;
+        public String detectionMethod;
+        public boolean has3DStructure;
+
         public FaceData() {
             this.isRecognized = false;
             this.confidence = 0.0f;
             this.timestamp = System.currentTimeMillis();
+            this.isReal = false;
+            this.detectionMethod = "Unknown";
+            this.has3DStructure = false;
+            this.boundingBox = new Rect();
+        }
+
+        public FaceData(Rect boundingBox, boolean isReal, String detectionMethod) {
+            this();
+            this.boundingBox = boundingBox;
+            this.isReal = isReal;
+            this.detectionMethod = detectionMethod;
         }
 
         @Override
@@ -598,7 +686,10 @@ public class MainActivity extends AppCompatActivity {
             return "FaceData{recognizedPerson=" +
                     (recognizedPerson != null ? recognizedPerson.name : "null") +
                     ", confidence=" + confidence +
-                    ", isRecognized=" + isRecognized + "}";
+                    ", isRecognized=" + isRecognized +
+                    ", isReal=" + isReal +
+                    ", detectionMethod='" + detectionMethod + "'" +
+                    ", boundingBox=" + boundingBox + "}";
         }
     }
 }

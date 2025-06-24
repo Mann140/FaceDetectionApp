@@ -9,13 +9,16 @@ import android.database.sqlite.SQLiteOpenHelper;
 import android.util.Log;
 import java.util.ArrayList;
 import java.util.List;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String TAG = "DatabaseHelper";
 
     // Database constants
     private static final String DATABASE_NAME = "FaceDetectionApp.db";
-    private static final int DATABASE_VERSION = 4;
+    private static final int DATABASE_VERSION = 5; // Updated version
 
     // Table names
     private static final String TABLE_PERSONS = "persons";
@@ -36,6 +39,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
     private static final String COLUMN_DATE = "date";
     private static final String COLUMN_TIMESTAMP = "timestamp";
     private static final String COLUMN_CONFIDENCE = "confidence";
+    private static final String COLUMN_LOCATION = "location";
 
     public DatabaseHelper(Context context) {
         super(context, DATABASE_NAME, null, DATABASE_VERSION);
@@ -69,6 +73,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     COLUMN_DATE + " TEXT NOT NULL, " +
                     COLUMN_TIMESTAMP + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                     COLUMN_CONFIDENCE + " REAL, " +
+                    COLUMN_LOCATION + " TEXT, " +
                     "FOREIGN KEY(" + COLUMN_PERSON_ID + ") REFERENCES " + TABLE_PERSONS + "(" + COLUMN_ID + ")" +
                     ")";
 
@@ -130,12 +135,36 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 }
             }
 
+            if (oldVersion < 5) {
+                // Add missing columns
+                try {
+                    db.execSQL("ALTER TABLE " + TABLE_PERSONS + " ADD COLUMN " + COLUMN_CREATED_AT + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+                    Log.d(TAG, "✅ Added created_at column to persons table");
+                } catch (SQLException e) {
+                    Log.w(TAG, "⚠️ created_at column might already exist");
+                }
+
+                try {
+                    db.execSQL("ALTER TABLE " + TABLE_PERSONS + " ADD COLUMN " + COLUMN_UPDATED_AT + " TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+                    Log.d(TAG, "✅ Added updated_at column to persons table");
+                } catch (SQLException e) {
+                    Log.w(TAG, "⚠️ updated_at column might already exist");
+                }
+
+                try {
+                    db.execSQL("ALTER TABLE " + TABLE_ATTENDANCE + " ADD COLUMN " + COLUMN_LOCATION + " TEXT");
+                    Log.d(TAG, "✅ Added location column to attendance table");
+                } catch (SQLException e) {
+                    Log.w(TAG, "⚠️ location column might already exist");
+                }
+            }
+
         } catch (SQLException e) {
             Log.e(TAG, "❌ Error during database upgrade", e);
         }
     }
 
-    // ==================== PERSON METHODS ====================
+
 
     /**
      * Save a new person with face encoding
@@ -191,6 +220,19 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     person.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMPLOYEE_ID));
                     person.faceEncoding = cursor.getBlob(cursor.getColumnIndexOrThrow(COLUMN_FACE_ENCODING));
                     person.isActive = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_IS_ACTIVE)) == 1;
+
+                    // Handle timestamp fields safely
+                    try {
+                        person.createdAt = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_CREATED_AT));
+                        person.updatedAt = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_UPDATED_AT));
+                    } catch (Exception e) {
+                        // If columns don't exist, use current time as fallback
+                        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                        String currentTime = sdf.format(new Date());
+                        person.createdAt = currentTime;
+                        person.updatedAt = currentTime;
+                    }
+
                     persons.add(person);
                 } while (cursor.moveToNext());
             }
@@ -230,6 +272,17 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                 person.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMPLOYEE_ID));
                 person.faceEncoding = cursor.getBlob(cursor.getColumnIndexOrThrow(COLUMN_FACE_ENCODING));
                 person.isActive = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_IS_ACTIVE)) == 1;
+
+                try {
+                    person.createdAt = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_CREATED_AT));
+                    person.updatedAt = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_UPDATED_AT));
+                } catch (Exception e) {
+                    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                    String currentTime = sdf.format(new Date());
+                    person.createdAt = currentTime;
+                    person.updatedAt = currentTime;
+                }
+
                 return person;
             }
 
@@ -310,7 +363,7 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         }
     }
 
-    // ==================== ATTENDANCE METHODS ====================
+
 
     /**
      * Record attendance
@@ -320,7 +373,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         try {
             db = this.getWritableDatabase();
 
-            String today = java.text.DateFormat.getDateInstance().format(new java.util.Date());
+            SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+            String today = dateFormat.format(new Date());
 
             ContentValues values = new ContentValues();
             values.put(COLUMN_PERSON_ID, personId);
@@ -357,7 +411,8 @@ public class DatabaseHelper extends SQLiteOpenHelper {
 
         try {
             db = this.getReadableDatabase();
-            String today = java.text.DateFormat.getDateInstance().format(new java.util.Date());
+            SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+            String today = dateFormat.format(new Date());
 
             String query = "SELECT " + COLUMN_ACTION_TYPE + ", COUNT(*) as count FROM " + TABLE_ATTENDANCE +
                     " WHERE " + COLUMN_DATE + " = ? GROUP BY " + COLUMN_ACTION_TYPE;
@@ -371,16 +426,16 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     String actionType = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_ACTION_TYPE));
                     int count = cursor.getInt(cursor.getColumnIndexOrThrow("count"));
 
-                    if ("check_in".equals(actionType)) {
+                    if ("check_in".equals(actionType) || "CHECK_IN".equals(actionType)) {
                         checkedIn = count;
-                    } else if ("check_out".equals(actionType)) {
+                    } else if ("check_out".equals(actionType) || "CHECK_OUT".equals(actionType)) {
                         checkedOut = count;
                     }
                 } while (cursor.moveToNext());
             }
 
             int total = checkedIn + checkedOut;
-            int present = Math.max(0, checkedIn - checkedOut); // People currently present
+            int present = Math.max(0, checkedIn - checkedOut);
 
             Stats stats = new Stats(total, checkedIn, checkedOut, present);
             Log.d(TAG, "📊 Today's stats: " + stats.toString());
@@ -423,11 +478,18 @@ public class DatabaseHelper extends SQLiteOpenHelper {
                     record.id = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_ID));
                     record.personId = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_PERSON_ID));
                     record.personName = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_NAME));
-                    record.employeeId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMPLOYEE_ID));
+                    record.personEmployeeId = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMPLOYEE_ID));
                     record.actionType = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_ACTION_TYPE));
                     record.date = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_DATE));
                     record.timestamp = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_TIMESTAMP));
                     record.confidence = cursor.getFloat(cursor.getColumnIndexOrThrow(COLUMN_CONFIDENCE));
+
+                    try {
+                        record.location = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_LOCATION));
+                    } catch (Exception e) {
+                        record.location = "";
+                    }
+
                     records.add(record);
                 } while (cursor.moveToNext());
             }
@@ -459,15 +521,33 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         public String employeeId;
         public byte[] faceEncoding;
         public boolean isActive;
+        public String createdAt;
+        public String updatedAt;
 
         public Person() {
             this.isActive = true;
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+            String currentTime = sdf.format(new Date());
+            this.createdAt = currentTime;
+            this.updatedAt = currentTime;
+        }
+
+        public String getFormattedCreatedDate() {
+            try {
+                SimpleDateFormat inputFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                SimpleDateFormat outputFormat = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
+                Date date = inputFormat.parse(createdAt);
+                return outputFormat.format(date);
+            } catch (Exception e) {
+                return createdAt != null ? createdAt : "Unknown";
+            }
         }
 
         @Override
         public String toString() {
             return "Person{id=" + id + ", name='" + name + "', employeeId='" + employeeId +
-                    "', isActive=" + isActive + ", hasEncoding=" + (faceEncoding != null) + "}";
+                    "', isActive=" + isActive + ", hasEncoding=" + (faceEncoding != null) +
+                    ", createdAt='" + createdAt + "'}";
         }
     }
 
@@ -501,16 +581,49 @@ public class DatabaseHelper extends SQLiteOpenHelper {
         public int id;
         public int personId;
         public String personName;
-        public String employeeId;
+        public String personEmployeeId;
         public String actionType;
         public String date;
         public String timestamp;
         public float confidence;
+        public String location;
+
+        public AttendanceRecord() {
+            this.location = "";
+        }
+
+        public String getFormattedTime() {
+            try {
+                SimpleDateFormat inputFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                SimpleDateFormat outputFormat = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+                Date date = inputFormat.parse(timestamp);
+                return outputFormat.format(date);
+            } catch (Exception e) {
+                if (timestamp != null && timestamp.contains(" ")) {
+                    String[] parts = timestamp.split(" ");
+                    if (parts.length > 1) {
+                        return parts[1];
+                    }
+                }
+                return timestamp != null ? timestamp : "";
+            }
+        }
+
+        public String getFormattedDate() {
+            try {
+                SimpleDateFormat inputFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+                SimpleDateFormat outputFormat = new SimpleDateFormat("dd/MM/yyyy", Locale.getDefault());
+                Date date = inputFormat.parse(timestamp);
+                return outputFormat.format(date);
+            } catch (Exception e) {
+                return this.date != null ? this.date : "";
+            }
+        }
 
         @Override
         public String toString() {
             return "AttendanceRecord{id=" + id + ", personName='" + personName +
-                    "', employeeId='" + employeeId + "', actionType='" + actionType +
+                    "', personEmployeeId='" + personEmployeeId + "', actionType='" + actionType +
                     "', date='" + date + "', confidence=" + confidence + "}";
         }
     }
