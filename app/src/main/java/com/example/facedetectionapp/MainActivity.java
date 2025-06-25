@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Handler;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -34,7 +35,6 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 
-
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
     private TextView faceCountText;
@@ -42,6 +42,11 @@ public class MainActivity extends AppCompatActivity {
     private FaceOverlayView overlayView;
     private FaceDetector detector;
     private AntiSpoofingDetector antiSpoofingDetector;
+
+    // Cache management fields
+    private Handler cacheHandler = new Handler();
+    private Runnable cacheCheckRunnable;
+    private static final long CACHE_CHECK_INTERVAL = 1000; // Check every second
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,6 +80,9 @@ public class MainActivity extends AppCompatActivity {
         overlayView.setLayoutParams(placeholder.getLayoutParams());
         parent.addView(overlayView, index);
 
+        // Start periodic cache checking
+        startPeriodicCacheCheck();
+
         // Check camera permission
         if (checkCameraPermission()) {
             startCamera();
@@ -82,6 +90,69 @@ public class MainActivity extends AppCompatActivity {
             requestCameraPermission();
         }
     }
+
+    // ========== CACHE MANAGEMENT METHODS ==========
+
+    private void startPeriodicCacheCheck() {
+        cacheCheckRunnable = new Runnable() {
+            @Override
+            public void run() {
+                // Check if cache should be cleared due to inactivity
+                if (antiSpoofingDetector != null) {
+                    antiSpoofingDetector.clearCacheIfStale();
+                }
+
+                // Schedule next check
+                cacheHandler.postDelayed(this, CACHE_CHECK_INTERVAL);
+            }
+        };
+
+        // Start the periodic check
+        cacheHandler.post(cacheCheckRunnable);
+    }
+
+    private void stopPeriodicCacheCheck() {
+        if (cacheCheckRunnable != null) {
+            cacheHandler.removeCallbacks(cacheCheckRunnable);
+            cacheCheckRunnable = null;
+        }
+    }
+
+    // ========== LIFECYCLE METHODS ==========
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Clear cache when app is paused
+        if (antiSpoofingDetector != null) {
+            antiSpoofingDetector.forceClearCache();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Restart periodic checking when app resumes
+        if (cacheCheckRunnable == null) {
+            startPeriodicCacheCheck();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+
+        // Stop periodic cache checking
+        stopPeriodicCacheCheck();
+
+        // Clean up the anti-spoofing detector
+        if (antiSpoofingDetector != null) {
+            antiSpoofingDetector.forceClearCache(); // Force clear on destroy
+            antiSpoofingDetector.close();
+        }
+    }
+
+    // ========== CAMERA METHODS ==========
 
     private boolean checkCameraPermission() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -137,6 +208,8 @@ public class MainActivity extends AppCompatActivity {
         }, ContextCompat.getMainExecutor(this));
     }
 
+    // ========== IMAGE PROCESSING WITH CACHE MANAGEMENT ==========
+
     @OptIn(markerClass = ExperimentalGetImage.class)
     private void processImage(ImageProxy imageProxy) {
         if (imageProxy.getImage() != null) {
@@ -146,45 +219,84 @@ public class MainActivity extends AppCompatActivity {
 
             detector.process(image)
                     .addOnSuccessListener(faces -> {
-                        // Create list of face data with TensorFlow Lite spoofing detection
-                        List<FaceData> faceDataList = new ArrayList<>();
-
-                        for (Face face : faces) {
-                            // Use TensorFlow Lite model for anti-spoofing detection
-                            FaceData faceData = antiSpoofingDetector.analyzeFace(imageProxy, face.getBoundingBox());
-                            faceDataList.add(faceData);
-                        }
-
-                        // Count real vs fake faces
-                        int realFaces = 0;
-                        int fakeFaces = 0;
-                        for (FaceData data : faceDataList) {
-                            if (data.isReal) realFaces++;
-                            else fakeFaces++;
-                        }
-
-                        final int finalRealFaces = realFaces;
-                        final int finalFakeFaces = fakeFaces;
-
-                        runOnUiThread(() -> {
-                            faceCountText.setText("Real faces: " + finalRealFaces +
-                                    " | Fake: " + finalFakeFaces);
-
-                            // Show warning if fake faces detected
-                            if (finalFakeFaces > 0) {
-                                spoofWarningText.setVisibility(View.VISIBLE);
-                                spoofWarningText.setText("⚠️ Spoofing detected by AI!");
-                            } else if (finalRealFaces > 0) {
-                                spoofWarningText.setVisibility(View.VISIBLE);
-                                spoofWarningText.setText("✓ Real faces detected by AI");
-                            } else {
-                                spoofWarningText.setVisibility(View.GONE);
+                        // Check if any faces are detected
+                        if (faces.isEmpty()) {
+                            // No faces detected - clear the anti-spoofing cache
+                            if (antiSpoofingDetector != null) {
+                                antiSpoofingDetector.clearCache();
                             }
 
-                            // Update overlay with face data
-                            overlayView.setFacesWithML(faceDataList,
-                                    imageProxy.getWidth(),
-                                    imageProxy.getHeight());
+                            runOnUiThread(() -> {
+                                faceCountText.setText("No faces detected - cache cleared");
+                                spoofWarningText.setVisibility(View.GONE);
+
+                                // Clear the overlay
+                                overlayView.setFacesWithML(new ArrayList<>(),
+                                        imageProxy.getWidth(),
+                                        imageProxy.getHeight());
+                            });
+                        } else {
+                            // Faces detected - update detection time and process normally
+                            if (antiSpoofingDetector != null) {
+                                antiSpoofingDetector.updateLastDetectionTime();
+                            }
+
+                            // Create list of face data with TensorFlow Lite spoofing detection
+                            List<FaceData> faceDataList = new ArrayList<>();
+
+                            for (Face face : faces) {
+                                // Use TensorFlow Lite model for anti-spoofing detection
+                                FaceData faceData = antiSpoofingDetector.analyzeFace(imageProxy, face.getBoundingBox());
+                                faceDataList.add(faceData);
+                            }
+
+                            // Count real vs fake faces
+                            int realFaces = 0;
+                            int fakeFaces = 0;
+                            for (FaceData data : faceDataList) {
+                                if (data.isReal) realFaces++;
+                                else fakeFaces++;
+                            }
+
+                            final int finalRealFaces = realFaces;
+                            final int finalFakeFaces = fakeFaces;
+
+                            runOnUiThread(() -> {
+                                // Show face count and cache status
+                                String cacheStatus = antiSpoofingDetector != null ?
+                                        antiSpoofingDetector.getCacheStatus() : "";
+
+                                faceCountText.setText("Real: " + finalRealFaces +
+                                        " | Fake: " + finalFakeFaces +
+                                        " | " + cacheStatus);
+
+                                // Show warning if fake faces detected
+                                if (finalFakeFaces > 0) {
+                                    spoofWarningText.setVisibility(View.VISIBLE);
+                                    spoofWarningText.setText("⚠️ Spoofing detected by AI!");
+                                } else if (finalRealFaces > 0) {
+                                    spoofWarningText.setVisibility(View.VISIBLE);
+                                    spoofWarningText.setText("✓ Real faces detected by AI");
+                                } else {
+                                    spoofWarningText.setVisibility(View.GONE);
+                                }
+
+                                // Update overlay with face data
+                                overlayView.setFacesWithML(faceDataList,
+                                        imageProxy.getWidth(),
+                                        imageProxy.getHeight());
+                            });
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        // On failure, also clear cache to prevent stale data
+                        if (antiSpoofingDetector != null) {
+                            antiSpoofingDetector.clearCache();
+                        }
+
+                        runOnUiThread(() -> {
+                            faceCountText.setText("Detection failed - cache cleared");
+                            spoofWarningText.setVisibility(View.GONE);
                         });
                     })
                     .addOnCompleteListener(task -> imageProxy.close());
@@ -192,6 +304,8 @@ public class MainActivity extends AppCompatActivity {
             imageProxy.close();
         }
     }
+
+    // ========== PERMISSION HANDLING ==========
 
     @Override
     public void onRequestPermissionsResult(int requestCode,
@@ -209,14 +323,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        // Clean up the anti-spoofing detector
-        if (antiSpoofingDetector != null) {
-            antiSpoofingDetector.close();
-        }
-    }
+    // ========== DATA CLASS ==========
 
     // Data class to hold face info with authenticity
     public static class FaceData {

@@ -38,6 +38,11 @@ public class AntiSpoofingDetector {
     private static final float STATIC_CONFIDENCE_THRESHOLD = 0.85f;
     private static final float LIVENESS_CONFIDENCE_THRESHOLD = 0.75f;
 
+    // Cache management fields
+    private long lastDetectionTime = 0;
+    private static final long CACHE_CLEAR_TIMEOUT = 2000; // 2 seconds
+    private static final long AUTO_CLEAR_TIMEOUT = 5000; // 5 seconds for automatic clearing
+
     // Detection components
     private final List<DetectionResult> detectionHistory = new ArrayList<>();
     private final StaticImageAnalyzer staticAnalyzer = new StaticImageAnalyzer();
@@ -45,7 +50,7 @@ public class AntiSpoofingDetector {
     private final TemporalAnalyzer temporalAnalyzer = new TemporalAnalyzer();
 
     public AntiSpoofingDetector(Context context) {
-        Log.e(TAG, "🚀 AntiSpoofingDetector - Consistent Detection v5.3");
+        Log.e(TAG, "🚀 AntiSpoofingDetector - Consistent Detection v5.3 with Auto Cache Clearing");
 
         try {
             loadModel(context);
@@ -76,6 +81,104 @@ public class AntiSpoofingDetector {
             throw new IOException("Failed to load model", e);
         }
     }
+
+    // ========== CACHE MANAGEMENT METHODS ==========
+
+    /**
+     * Clears all cached data when no faces are detected
+     */
+    public void clearCache() {
+        Log.e(TAG, "🧹 Clearing anti-spoofing cache - no faces detected");
+
+        // Clear detection history
+        detectionHistory.clear();
+
+        // Clear liveness analyzer recent outputs
+        if (livenessAnalyzer != null) {
+            livenessAnalyzer.clearCache();
+        }
+
+        Log.e(TAG, String.format("✅ Cache cleared successfully - History: %d, Liveness: %d",
+                detectionHistory.size(),
+                livenessAnalyzer != null ? livenessAnalyzer.getCacheSize() : 0));
+    }
+
+    /**
+     * Updates the timestamp of the last face detection
+     */
+    public void updateLastDetectionTime() {
+        lastDetectionTime = System.currentTimeMillis();
+    }
+
+    /**
+     * Clears cache if too much time has passed since last detection
+     * Call this periodically or on each frame to auto-clear stale data
+     */
+    public void clearCacheIfStale() {
+        long currentTime = System.currentTimeMillis();
+        if (lastDetectionTime > 0 && (currentTime - lastDetectionTime) > AUTO_CLEAR_TIMEOUT) {
+            Log.e(TAG, String.format("⏰ Auto-clearing stale cache after %dms",
+                    currentTime - lastDetectionTime));
+            clearCache();
+            lastDetectionTime = 0; // Reset timer
+        }
+    }
+
+    /**
+     * Forces an immediate cache clear and resets all timers
+     */
+    public void forceClearCache() {
+        Log.e(TAG, "🔄 Force clearing cache");
+        clearCache();
+        lastDetectionTime = 0;
+    }
+
+    /**
+     * Gets the current cache status for debugging
+     */
+    public String getCacheStatus() {
+        long timeSinceDetection = lastDetectionTime > 0 ?
+                System.currentTimeMillis() - lastDetectionTime : -1;
+
+        return String.format("H:%d L:%d T:%dms",
+                detectionHistory.size(),
+                livenessAnalyzer != null ? livenessAnalyzer.getCacheSize() : 0,
+                timeSinceDetection);
+    }
+
+    /**
+     * Checks if the cache has meaningful data
+     */
+    public boolean hasCachedData() {
+        return !detectionHistory.isEmpty() ||
+                (livenessAnalyzer != null && livenessAnalyzer.getCacheSize() > 0);
+    }
+
+    /**
+     * Gets detailed cache information for debugging
+     */
+    public String getDetailedCacheInfo() {
+        StringBuilder info = new StringBuilder();
+        info.append("=== CACHE STATUS ===\n");
+        info.append(String.format("Detection History: %d entries\n", detectionHistory.size()));
+
+        if (livenessAnalyzer != null) {
+            info.append(String.format("Liveness Cache: %d entries\n", livenessAnalyzer.getCacheSize()));
+        }
+
+        if (lastDetectionTime > 0) {
+            long age = System.currentTimeMillis() - lastDetectionTime;
+            info.append(String.format("Last Detection: %dms ago\n", age));
+            info.append(String.format("Auto-clear in: %dms\n", Math.max(0, AUTO_CLEAR_TIMEOUT - age)));
+        } else {
+            info.append("Last Detection: Never\n");
+        }
+
+        info.append("==================");
+        return info.toString();
+    }
+
+    // ========== MAIN ANALYSIS METHODS ==========
 
     public MainActivity.FaceData analyzeFace(ImageProxy imageProxy, Rect faceRect) {
         Log.e(TAG, "🚀 Starting face analysis...");
@@ -584,6 +687,21 @@ public class AntiSpoofingDetector {
             return analysis;
         }
 
+        /**
+         * Clears the recent outputs cache
+         */
+        public void clearCache() {
+            recentOutputs.clear();
+            Log.e(TAG, "🧹 LivenessAnalyzer cache cleared");
+        }
+
+        /**
+         * Gets the current cache size
+         */
+        public int getCacheSize() {
+            return recentOutputs.size();
+        }
+
         private float calculateVariability() {
             if (recentOutputs.size() < 3) return 0f;
 
@@ -953,8 +1071,7 @@ public class AntiSpoofingDetector {
             interpreter = null;
         }
         isModelLoaded = false;
-        detectionHistory.clear();
-        livenessAnalyzer.recentOutputs.clear();
+        forceClearCache(); // Clear cache on close
         Log.e(TAG, "🔒 Advanced AntiSpoofingDetector closed");
     }
 }
