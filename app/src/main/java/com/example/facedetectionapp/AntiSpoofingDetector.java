@@ -31,20 +31,28 @@ public class AntiSpoofingDetector {
     private Interpreter interpreter;
     private boolean isModelLoaded = false;
 
-    // Temporal consistency for better accuracy
-    private List<AnalysisResult> recentResults = new ArrayList<>();
-    private static final int TEMPORAL_WINDOW = 3; // Average over 3 frames
-    private static final int MIN_FACE_SIZE = 80; // Minimum reliable face size
+    // Enhanced configuration
+    private static final int MAX_HISTORY_SIZE = 20;
+    private static final int MIN_FRAMES_FOR_TEMPORAL = 5;
+    private static final int MIN_FACE_SIZE = 90;
+    private static final float STATIC_CONFIDENCE_THRESHOLD = 0.85f;
+    private static final float LIVENESS_CONFIDENCE_THRESHOLD = 0.75f;
+
+    // Detection components
+    private final List<DetectionResult> detectionHistory = new ArrayList<>();
+    private final StaticImageAnalyzer staticAnalyzer = new StaticImageAnalyzer();
+    private final LivenessAnalyzer livenessAnalyzer = new LivenessAnalyzer();
+    private final TemporalAnalyzer temporalAnalyzer = new TemporalAnalyzer();
 
     public AntiSpoofingDetector(Context context) {
-        Log.e(TAG, "🚀 IMPROVED AntiSpoofingDetector - Enhanced Small Face Detection!");
+        Log.e(TAG, "🚀 AntiSpoofingDetector - Enhanced Static Detection v5.1");
 
         try {
             loadModel(context);
             isModelLoaded = true;
             Log.e(TAG, "✅ Model loaded successfully");
         } catch (Exception e) {
-            Log.e(TAG, "❌ Failed to load model", e);
+            Log.e(TAG, "❌ Failed to load model: " + e.getMessage(), e);
             isModelLoaded = false;
         }
     }
@@ -70,378 +78,648 @@ public class AntiSpoofingDetector {
     }
 
     public MainActivity.FaceData analyzeFace(ImageProxy imageProxy, Rect faceRect) {
+        Log.e(TAG, "🚀 Starting face analysis...");
+
         if (!isModelLoaded || interpreter == null) {
-            return new MainActivity.FaceData(faceRect, true, 50.0f, "ModelNotLoaded", false);
+            Log.e(TAG, "❌ Model not loaded!");
+            return new MainActivity.FaceData(faceRect, false, 85.0f, "ModelNotLoaded", false);
         }
 
         try {
             Bitmap faceBitmap = extractFaceFromImage(imageProxy, faceRect);
             if (faceBitmap == null) {
-                return new MainActivity.FaceData(faceRect, true, 50.0f, "ExtractError", false);
+                Log.e(TAG, "❌ Failed to extract face bitmap!");
+                return new MainActivity.FaceData(faceRect, false, 80.0f, "ExtractError", false);
             }
 
-            // Calculate face distance/size metrics for context
+            // Calculate face metrics
             int imageWidth = imageProxy.getWidth();
             int imageHeight = imageProxy.getHeight();
             float faceArea = faceRect.width() * faceRect.height();
             float imageArea = imageWidth * imageHeight;
-            float faceToImageRatio = faceArea / imageArea;
 
-            Log.e(TAG, String.format("📏 Face metrics: area=%.0f, imageArea=%.0f, ratio=%.3f, faceSize=%dx%d",
-                    faceArea, imageArea, faceToImageRatio, faceRect.width(), faceRect.height()));
+            Log.e(TAG, String.format("📊 Face: %dx%d, ratio=%.3f",
+                    faceRect.width(), faceRect.height(), faceArea / imageArea));
 
-            // Check if face is too small for reliable detection
+            // Size check
             if (faceRect.width() < MIN_FACE_SIZE || faceRect.height() < MIN_FACE_SIZE) {
-                Log.e(TAG, "⚠️ Face too small for reliable detection - defaulting to FAKE for security");
-                return new MainActivity.FaceData(faceRect, false, 85.0f, "TooSmall-DefaultFake", false);
+                Log.e(TAG, "⚠️ Face too small - defaulting to FAKE");
+                return new MainActivity.FaceData(faceRect, false, 85.0f, "TooSmall", false);
             }
 
             Bitmap resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, INPUT_SIZE, INPUT_SIZE, true);
             ByteBuffer inputBuffer = preprocessForMobileFaceNet(resizedBitmap);
             float[] outputs = runInference(inputBuffer);
 
-            // Use improved interpretation with temporal consistency
-            AnalysisResult result = interpretOutputsWithImprovedLogic(outputs, faceToImageRatio, faceRect.width());
+            Log.e(TAG, "✅ ML inference complete");
 
-            // Add to temporal window and get smoothed result
-            AnalysisResult finalResult = applyTemporalSmoothing(result);
+            // Use enhanced detection logic
+            DetectionResult result = detectAntiSpoofing(outputs, (int)faceArea, (int)imageArea, faceRect.width(), faceRect.height());
 
-            Log.e(TAG, String.format("🎯 FINAL Result - IsReal: %s, Confidence: %.1f%% (Method: %s)",
-                    finalResult.isReal, finalResult.confidence, finalResult.method));
+            Log.e(TAG, String.format("🎯 RESULT: %s (%.1f%% - %s)",
+                    result.isReal ? "REAL" : "FAKE", result.confidence, result.method));
 
-            return new MainActivity.FaceData(faceRect, finalResult.isReal, finalResult.confidence, finalResult.method, false);
+            return new MainActivity.FaceData(faceRect, result.isReal, result.confidence, result.method, false);
 
         } catch (Exception e) {
-            Log.e(TAG, "❌ Error in analyzeFace", e);
-            return new MainActivity.FaceData(faceRect, false, 75.0f, "Error-DefaultFake", false);
+            Log.e(TAG, "❌ Error: " + e.getMessage(), e);
+            return new MainActivity.FaceData(faceRect, false, 80.0f, "Error", false);
         }
     }
 
-    private AnalysisResult interpretOutputsWithImprovedLogic(float[] outputs, float faceToImageRatio, int faceWidth) {
-        // Log the raw outputs
+    /**
+     * Main detection method - analyzes face anti-spoofing with multiple layers
+     */
+    public DetectionResult detectAntiSpoofing(float[] rawOutputs, int faceArea, int imageArea, int faceWidth, int faceHeight) {
+        Log.e(TAG, "🔍 Starting Advanced Anti-Spoofing Analysis...");
+
+        // Log raw outputs first
         StringBuilder sb = new StringBuilder("📊 Raw outputs: [");
-        for (int i = 0; i < Math.min(outputs.length, 8); i++) {
-            sb.append(String.format("%.4f", outputs[i]));
-            if (i < Math.min(outputs.length, 8) - 1) sb.append(", ");
+        for (int i = 0; i < Math.min(rawOutputs.length, 8); i++) {
+            sb.append(String.format("%.4f", rawOutputs[i]));
+            if (i < Math.min(rawOutputs.length, 8) - 1) sb.append(", ");
         }
         sb.append("]");
         Log.e(TAG, sb.toString());
 
-        // Calculate basic statistics
-        float firstHalf = outputs[0] + outputs[1] + outputs[2] + outputs[3];
-        float secondHalf = outputs[4] + outputs[5] + outputs[6] + outputs[7];
-        float totalSum = firstHalf + secondHalf;
-        float average = totalSum / 8.0f;
+        // Step 1: Calculate face metrics
+        FaceMetrics metrics = calculateFaceMetrics(faceArea, imageArea, faceWidth, faceHeight);
+        logFaceMetrics(metrics);
 
-        // Distance categorization (normal thresholds)
-        String distanceCategory;
-        float distanceMultiplier;
+        // Step 2: Perform static image analysis
+        StaticAnalysis staticAnalysis = staticAnalyzer.analyzeForStaticPatterns(rawOutputs, metrics);
+        logStaticAnalysis(staticAnalysis);
 
-        if (faceToImageRatio > 0.30f || faceWidth > 350) {
-            distanceCategory = "CLOSE";
-            distanceMultiplier = 1.0f;
-        } else if (faceToImageRatio > 0.15f || faceWidth > 200) {
-            distanceCategory = "MEDIUM";
-            distanceMultiplier = 1.5f;
-        } else if (faceToImageRatio > 0.08f || faceWidth > 140) {
-            distanceCategory = "FAR";
-            distanceMultiplier = 2.2f;
+        // Step 3: Perform liveness analysis
+        LivenessAnalysis livenessAnalysis = livenessAnalyzer.analyzeLiveness(rawOutputs, metrics);
+        logLivenessAnalysis(livenessAnalysis);
+
+        // Step 4: Initial classification
+        DetectionResult initialResult = performInitialClassification(rawOutputs, metrics, staticAnalysis, livenessAnalysis);
+        Log.e(TAG, String.format("🔄 Initial Result: %s (%.1f%% - %s)",
+                initialResult.isReal ? "REAL" : "FAKE", initialResult.confidence, initialResult.method));
+
+        // Step 5: Store result and perform temporal analysis
+        detectionHistory.add(initialResult);
+        if (detectionHistory.size() > MAX_HISTORY_SIZE) {
+            detectionHistory.remove(0);
+        }
+
+        Log.e(TAG, String.format("📚 Detection History: %d entries", detectionHistory.size()));
+
+        // Step 6: Apply temporal analysis if enough history
+        DetectionResult finalResult = temporalAnalyzer.applyTemporalAnalysis(initialResult, detectionHistory);
+
+        logFinalResult(finalResult);
+        return finalResult;
+    }
+
+    private FaceMetrics calculateFaceMetrics(int faceArea, int imageArea, int faceWidth, int faceHeight) {
+        FaceMetrics metrics = new FaceMetrics();
+        metrics.faceArea = faceArea;
+        metrics.imageArea = imageArea;
+        metrics.ratio = (float) faceArea / imageArea;
+        metrics.width = faceWidth;
+        metrics.height = faceHeight;
+
+        // Enhanced distance categorization
+        if (metrics.ratio < 0.08f) {
+            metrics.distanceCategory = "VERY_FAR";
+            metrics.distanceMultiplier = 2.5f;
+        } else if (metrics.ratio < 0.15f) {
+            metrics.distanceCategory = "FAR";
+            metrics.distanceMultiplier = 2.0f;
+        } else if (metrics.ratio < 0.25f) {
+            metrics.distanceCategory = "MEDIUM";
+            metrics.distanceMultiplier = 1.5f;
+        } else if (metrics.ratio < 0.40f) {
+            metrics.distanceCategory = "CLOSE";
+            metrics.distanceMultiplier = 1.2f;
         } else {
-            distanceCategory = "VERY_FAR";
-            distanceMultiplier = 3.0f;
+            metrics.distanceCategory = "VERY_CLOSE";
+            metrics.distanceMultiplier = 1.0f;
         }
 
-        Log.e(TAG, String.format("📏 Distance: %s (ratio=%.3f, width=%d, multiplier=%.1f)",
-                distanceCategory, faceToImageRatio, faceWidth, distanceMultiplier));
+        return metrics;
+    }
 
-        // Analyze value distribution
-        float minValue = Float.MAX_VALUE, maxValue = Float.MIN_VALUE;
-        int veryHighCount = 0;    // Count >0.9
-        int highCount = 0;        // Count 0.7-0.9
-        int moderateCount = 0;    // Count 0.2-0.7
-        int lowCount = 0;         // Count 0.0-0.2
-        int negativeCount = 0;    // Count <0.0
+    private DetectionResult performInitialClassification(float[] rawOutputs, FaceMetrics metrics,
+                                                         StaticAnalysis staticAnalysis, LivenessAnalysis livenessAnalysis) {
 
-        for (int i = 0; i < 8; i++) {
-            minValue = Math.min(minValue, outputs[i]);
-            maxValue = Math.max(maxValue, outputs[i]);
+        Log.e(TAG, "🔍 Starting Initial Classification...");
 
-            if (outputs[i] > 0.9f) veryHighCount++;
-            else if (outputs[i] > 0.7f) highCount++;
-            else if (outputs[i] > 0.2f) moderateCount++;
-            else if (outputs[i] >= 0.0f) lowCount++;
-            else negativeCount++;
+        // Priority 1: Strong static image detection
+        if (staticAnalysis.isStaticImage && staticAnalysis.staticConfidence > STATIC_CONFIDENCE_THRESHOLD) {
+            Log.e(TAG, String.format("🚨 STATIC IMAGE DETECTED! Confidence: %.1f%%, Pattern: %s",
+                    staticAnalysis.staticConfidence * 100, staticAnalysis.pattern));
+            return new DetectionResult(false, staticAnalysis.staticConfidence * 100,
+                    "StaticImageDetected-" + staticAnalysis.pattern);
         }
 
-        float overallRange = maxValue - minValue;
-        float standardDeviation = calculateStandardDeviation(outputs, average);
-
-        Log.e(TAG, String.format("📊 Enhanced Analysis: sum=%.3f, avg=%.3f, range=%.3f, std=%.3f",
-                totalSum, average, overallRange, standardDeviation));
-        Log.e(TAG, String.format("📊 Refined Counts: veryHigh=%d, high=%d, moderate=%d, low=%d, neg=%d",
-                veryHighCount, highCount, moderateCount, lowCount, negativeCount));
-
-        // STATIC IMAGE PATTERN DETECTION
-        boolean staticImageDetected = false;
-        String staticReason = "";
-
-        // Pattern 1: Classic static image - all values very close to 1.0
-        if (average > 0.95f && standardDeviation < 0.02f && veryHighCount >= 6) {
-            staticImageDetected = true;
-            staticReason = "ClassicStatic(AllHigh)";
+        // Priority 2: Strong liveness indicators
+        if (livenessAnalysis.showsLiveness && livenessAnalysis.livenessScore > LIVENESS_CONFIDENCE_THRESHOLD) {
+            Log.e(TAG, String.format("✅ LIVENESS DETECTED! Score: %.1f%%, Indicators: %s",
+                    livenessAnalysis.livenessScore * 100, livenessAnalysis.livenessIndicators));
+            return new DetectionResult(true, livenessAnalysis.livenessScore * 100,
+                    "LivenessDetected-" + livenessAnalysis.livenessIndicators);
         }
 
-        // Pattern 2: Suspicious uniformity in high values
-        if (veryHighCount >= 7 && standardDeviation < 0.03f) {
-            staticImageDetected = true;
-            staticReason = "SuspiciousUniformity";
-        }
+        Log.e(TAG, "⚖️ Proceeding to Statistical Classification...");
 
-        // Pattern 3: Specific problematic pattern from logs - one dominant high value with specific distribution
-        if (maxValue > 0.85f && veryHighCount == 1 && (negativeCount + lowCount) >= 6 &&
-                standardDeviation > 0.25f && standardDeviation < 0.35f) {
-            staticImageDetected = true;
-            staticReason = "ProblematicPattern";
-        }
+        // Priority 3: Statistical analysis with adaptive thresholds
+        return performStatisticalClassification(rawOutputs, metrics, staticAnalysis, livenessAnalysis);
+    }
 
-        // Pattern 4: Another suspicious pattern - moderate average with one very high value
-        if (average > 0.1f && average < 0.2f && maxValue > 0.8f && veryHighCount == 1 &&
-                lowCount >= 4) {
-            staticImageDetected = true;
-            staticReason = "ModerateAvgDominant";
-        }
+    private DetectionResult performStatisticalClassification(float[] rawOutputs, FaceMetrics metrics,
+                                                             StaticAnalysis staticAnalysis, LivenessAnalysis livenessAnalysis) {
 
-        // Pattern 5: REFINED - More specific static image detection
-        if (veryHighCount >= 4 && average > 0.48f && average < 0.52f &&
-                (negativeCount + lowCount) >= 4 && maxValue > 0.99f && standardDeviation < 0.49f) {
-            staticImageDetected = true;
-            staticReason = "HighCountModerateAvg";
-        }
+        Log.e(TAG, "📊 Starting Statistical Classification...");
 
-        // Pattern 5: REFINED - More specific static image detection
-        if (veryHighCount >= 4 && average > 0.48f && average < 0.52f &&
-                (negativeCount + lowCount) >= 4 && maxValue > 0.99f && standardDeviation < 0.49f) {
-            staticImageDetected = true;
-            staticReason = "HighCountModerateAvg";
-        }
+        // Calculate enhanced statistical features
+        float[] stats = calculateEnhancedStatistics(rawOutputs);
+        int[] counts = countValueDistribution(rawOutputs);
 
-        // Pattern 6: NEW - Catch the MEDIUM distance static pattern from recent logs
-        if (veryHighCount >= 4 && average > 0.55f && average < 0.65f &&
-                maxValue > 0.98f && (negativeCount + lowCount) >= 3 && overallRange > 1.0f) {
-            staticImageDetected = true;
-            staticReason = "MediumDistanceStatic";
-        }
+        Log.e(TAG, String.format("📈 Statistics: avg=%.3f, std=%.3f, min=%.3f, max=%.3f",
+                stats[1], stats[3], stats[4], stats[5]));
+        Log.e(TAG, String.format("📊 Value Counts: veryHigh=%d, high=%d, moderate=%d, low=%d, negative=%d",
+                counts[0], counts[1], counts[2], counts[3], counts[4]));
 
-        // Pattern 7: NEW - Catch the moderate high pattern
-        if (veryHighCount >= 4 && average > 0.50f && average < 0.61f &&
-                maxValue > 0.997f && standardDeviation > 0.45f && standardDeviation < 0.49f) {
-            staticImageDetected = true;
-            staticReason = "ModerateHighPattern";
-        }
+        // Adaptive threshold calculation
+        float[] thresholds = calculateAdaptiveThresholds(metrics, staticAnalysis, livenessAnalysis);
+        float fakeThreshold = thresholds[0], realThreshold = thresholds[1];
 
-        // Pattern 8: NEW - Catch the 50/50 tie score pattern (specific to this static image)
-        if (veryHighCount == 4 && average > 0.485f && average < 0.505f &&
-                maxValue > 0.998f && (negativeCount + lowCount) >= 4 &&
-                standardDeviation > 0.48f && standardDeviation < 0.51f) {
-            staticImageDetected = true;
-            staticReason = "TieScorePattern";
-        }
+        Log.e(TAG, String.format("🎯 Adaptive Thresholds: fake>%.1f%%, real<%.1f%%", fakeThreshold, realThreshold));
 
-        // If static image pattern detected, return immediately
-        if (staticImageDetected) {
-            Log.e(TAG, String.format("🚨 STATIC IMAGE DETECTED: %s", staticReason));
-            return new AnalysisResult(false, 90f, "StaticImage-" + staticReason);
-        }
+        // Enhanced scoring system
+        float realScore = calculateRealScore(counts, stats, metrics);
+        float fakeScore = calculateFakeScore(counts, stats, metrics, staticAnalysis);
 
-        // NORMAL ANALYSIS for non-static patterns
-        float realScore = 0f;
-        float fakeScore = 0f;
-        String method = distanceCategory + "-";
+        Log.e(TAG, String.format("⚖️ Scores: real=%.1f, fake=%.1f", realScore, fakeScore));
 
-        // Factor 1: Average analysis (normal thresholds)
-        if (average > 0.8f) {
-            fakeScore += 6f * distanceMultiplier;
-            method += "VeryHighAvg ";
-        } else if (average > 0.6f) {
-            fakeScore += 4f * distanceMultiplier;
-            method += "HighAvg ";
-        } else if (average > 0.35f) {
-            fakeScore += 2f * distanceMultiplier;
-            method += "ModAvg ";
-        } else if (average > 0.15f) {
-            realScore += 1f;
-            method += "MidAvg ";
-        } else {
-            realScore += 2f;
-            method += "LowAvg ";
-        }
-
-        // Factor 2: Uniformity analysis (normal thresholds)
-        if (standardDeviation < 0.01f) {
-            fakeScore += 4f * distanceMultiplier;
-            method += "VeryUniform ";
-        } else if (standardDeviation < 0.03f) {
-            fakeScore += 2f * distanceMultiplier;
-            method += "Uniform ";
-        } else if (standardDeviation > 0.4f) {
-            realScore += 2f;
-            method += "HighVar ";
-        } else if (standardDeviation > 0.2f) {
-            realScore += 1f;
-            method += "ModVar ";
-        }
-
-        // Factor 3: Distribution analysis
-        if (veryHighCount >= 6) {
-            fakeScore += 4f * distanceMultiplier;
-            method += "AlmostAllHigh ";
-        } else if (veryHighCount >= 4) {
-            fakeScore += 2f * distanceMultiplier;
-            method += "ManyHigh ";
-        } else if (veryHighCount >= 2) {
-            realScore += 0.5f;
-            method += "SomeHigh ";
-        }
-
-        if (negativeCount >= 4 || lowCount >= 5) {
-            realScore += 2f;
-            method += "ManyLow ";
-        } else if (negativeCount >= 2 || lowCount >= 3) {
-            realScore += 1f;
-            method += "SomeLow ";
-        } else if (negativeCount == 0 && lowCount <= 1) {
-            fakeScore += 2f * distanceMultiplier;
-            method += "VeryFewLow ";
-        }
-
-        // Factor 4: Range analysis
-        if (overallRange < 0.02f) {
-            fakeScore += 3f * distanceMultiplier;
-            method += "VerySmallRange ";
-        } else if (overallRange < 0.05f) {
-            fakeScore += 2f * distanceMultiplier;
-            method += "SmallRange ";
-        } else if (overallRange > 1.0f) {
-            realScore += 2f;
-            method += "LargeRange ";
-        } else if (overallRange > 0.5f) {
-            realScore += 1f;
-            method += "MediumRange ";
-        }
-
-        // Factor 5: Pattern detection
-        if (maxValue > 0.8f && (maxValue - minValue) > 0.7f) {
-            realScore += 1f; // Natural variation
-            method += "DominantValue ";
-        }
-
-        // Decision making with balanced thresholds
         float totalScore = realScore + fakeScore;
-        float fakePercentage = totalScore > 0 ? (fakeScore / totalScore) * 100f : 50f;
+        float fakePct = totalScore > 0 ? (fakeScore / totalScore) * 100 : 0;
 
+        Log.e(TAG, String.format("🔢 Fake Percentage: %.1f%% (total score: %.1f)", fakePct, totalScore));
+
+        // Classification logic
         boolean isReal;
         float confidence;
+        String method;
 
-        // Even more aggressive thresholds to catch 50% cases
-        float fakeThreshold = Math.max(50f, 55f - (distanceMultiplier - 1.0f) * 3f);
-        float realThreshold = Math.min(25f, 30f + (distanceMultiplier - 1.0f) * 3f);
-
-        if (fakePercentage >= fakeThreshold) {
+        if (fakePct > fakeThreshold) {
             isReal = false;
-            confidence = Math.min(95f, 75f + (fakePercentage - fakeThreshold) * 0.5f);
-            method = "Fake-" + method.trim();
-        } else if (fakePercentage <= realThreshold) {
+            confidence = Math.min(95f, 50f + fakePct);
+            method = "Statistical-Fake";
+            Log.e(TAG, String.format("❌ FAKE: %.1f%% > %.1f%% threshold", fakePct, fakeThreshold));
+        } else if (fakePct < realThreshold) {
             isReal = true;
-            confidence = Math.min(95f, 70f + (fakeThreshold - fakePercentage) * 0.4f);
-            method = "Real-" + method.trim();
+            confidence = Math.min(95f, 80f + (realThreshold - fakePct));
+            method = "Statistical-Real";
+            Log.e(TAG, String.format("✅ REAL: %.1f%% < %.1f%% threshold", fakePct, realThreshold));
         } else {
-            // Uncertain zone - slight bias toward real for better usability
-            isReal = true;
-            confidence = 60f;
-            method = "UncertainReal-" + method.trim();
+            // Uncertain zone - use additional heuristics
+            Log.e(TAG, String.format("❓ UNCERTAIN: %.1f%% is between thresholds", fakePct));
+            isReal = resolveUncertainCase(rawOutputs, metrics, staticAnalysis, livenessAnalysis);
+            confidence = 60f + Math.abs(fakePct - 50f) * 0.8f;
+            method = "Statistical-Uncertain";
+            Log.e(TAG, String.format("🔍 Uncertain resolved to: %s", isReal ? "REAL" : "FAKE"));
         }
 
-        Log.e(TAG, String.format("🎯 SMART Decision: %s (realScore=%.1f, fakeScore=%.1f, fakePct=%.1f%%, confidence=%.1f%%, thresholds: fake>%.1f, real<%.1f)",
-                isReal ? "REAL" : "FAKE", realScore, fakeScore, fakePercentage, confidence, fakeThreshold, realThreshold));
-        Log.e(TAG, String.format("🔍 Method: %s", method));
+        DetectionResult result = new DetectionResult(isReal, confidence, method);
+        result.rawOutputs = rawOutputs;
+        result.faceMetrics = metrics;
+        result.staticAnalysis = staticAnalysis;
+        result.livenessAnalysis = livenessAnalysis;
 
-        return new AnalysisResult(isReal, confidence, method);
+        return result;
     }
 
-    // SMART TEMPORAL ANALYSIS - Focuses on inconsistency patterns
-    private AnalysisResult applyTemporalSmoothing(AnalysisResult currentResult) {
-        recentResults.add(currentResult);
+    private boolean resolveUncertainCase(float[] rawOutputs, FaceMetrics metrics,
+                                         StaticAnalysis staticAnalysis, LivenessAnalysis livenessAnalysis) {
+        int realIndicators = 0;
+        int fakeIndicators = 0;
 
-        if (recentResults.size() > TEMPORAL_WINDOW) {
-            recentResults.remove(0);
+        // Check for weak static patterns
+        if (staticAnalysis.suspiciousPatterns > 2) fakeIndicators += 2;
+
+        // Check for any liveness signs
+        if (livenessAnalysis.variabilityScore > 0.3f) realIndicators += 1;
+        if (livenessAnalysis.movementScore > 0.2f) realIndicators += 1;
+
+        // Distance-based heuristics
+        if (metrics.distanceCategory.equals("FAR") || metrics.distanceCategory.equals("VERY_FAR")) {
+            realIndicators += 1; // Real people often have varying distances
         }
 
-        if (recentResults.size() < 2) {
-            return currentResult;
+        // Value distribution patterns
+        float[] stats = calculateEnhancedStatistics(rawOutputs);
+        float std = stats[3]; // standard deviation
+        float max = stats[5]; // max value
+        float min = stats[4]; // min value
+
+        if (std > 0.4f) realIndicators += 1; // High variance suggests real
+        if (max > 0.99f && min < 0.01f) fakeIndicators += 1; // Extreme values suggest fake
+
+        return realIndicators > fakeIndicators;
+    }
+
+    private float[] calculateAdaptiveThresholds(FaceMetrics metrics, StaticAnalysis staticAnalysis, LivenessAnalysis livenessAnalysis) {
+        float baseFakeThreshold = 55f;
+        float baseRealThreshold = 25f;
+
+        // Adjust based on static analysis (most important)
+        if (staticAnalysis.suspiciousPatterns > 0) {
+            baseFakeThreshold -= staticAnalysis.suspiciousPatterns * 8f;
         }
 
-        // Check for static image indicators in temporal analysis
-        boolean hasStaticPattern = false;
-        int staticDetections = 0;
+        // Adjust based on liveness
+        if (livenessAnalysis.livenessScore > 0.5f) {
+            baseRealThreshold += 10f;
+        } else if (livenessAnalysis.livenessScore < 0.3f) {
+            baseFakeThreshold -= 10f;
+        }
 
-        for (AnalysisResult result : recentResults) {
-            if (result.method.contains("StaticImage")) {
-                staticDetections++;
-                hasStaticPattern = true;
+        // Photo-like pattern penalty
+        if (livenessAnalysis.livenessIndicators != null &&
+                livenessAnalysis.livenessIndicators.contains("PhotoLikePenalty")) {
+            baseFakeThreshold -= 15f;
+        }
+
+        // Distance adjustments
+        if (metrics.distanceCategory.equals("VERY_FAR")) {
+            baseFakeThreshold -= 5f;
+        } else if (metrics.distanceCategory.equals("VERY_CLOSE")) {
+            baseFakeThreshold += 5f;
+        }
+
+        // Bounds checking
+        baseFakeThreshold = Math.max(20f, Math.min(80f, baseFakeThreshold));
+        baseRealThreshold = Math.max(5f, Math.min(50f, baseRealThreshold));
+
+        return new float[]{baseFakeThreshold, baseRealThreshold};
+    }
+
+    private float calculateRealScore(int[] counts, float[] stats, FaceMetrics metrics) {
+        float score = 0f;
+
+        // Favor moderate variance (real faces have natural variation)
+        if (stats[3] > 0.3f && stats[3] < 0.6f) score += 3f;
+
+        // Favor balanced distributions
+        if (counts[3] > 0 && counts[0] > 0) score += 2f; // Mix of low and high values
+
+        // Distance-based scoring
+        if (metrics.distanceCategory.equals("FAR") || metrics.distanceCategory.equals("MEDIUM")) {
+            score += 2f; // Real people move and have varying distances
+        }
+
+        // Natural patterns
+        if (counts[2] > 0) score += 1f; // Some moderate values
+        if (stats[6] > 0.8f && stats[6] < 1.1f) score += 1f; // Good range
+
+        return score;
+    }
+
+    private float calculateFakeScore(int[] counts, float[] stats, FaceMetrics metrics, StaticAnalysis staticAnalysis) {
+        float score = 0f;
+
+        // Static image indicators (most important)
+        score += staticAnalysis.suspiciousPatterns * 3f;
+
+        // Photo-specific patterns
+        if (counts[0] >= 2 && stats[5] > 0.985f && counts[4] >= 2) {
+            score += 4f; // High max with negatives - photo pattern
+        }
+
+        // Extreme value patterns
+        if (counts[0] >= 4 && counts[4] >= 2) score += 3f;
+        if (stats[5] > 0.998f) score += 2f;
+        if (stats[3] < 0.1f) score += 2f;
+
+        // Bi-modal distribution
+        if ((counts[0] + counts[4]) >= 4 && (counts[1] + counts[2]) <= 1) {
+            score += 3f;
+        }
+
+        return score;
+    }
+
+    // Helper classes for specialized analysis
+
+    private static class StaticImageAnalyzer {
+        public StaticAnalysis analyzeForStaticPatterns(float[] rawOutputs, FaceMetrics metrics) {
+            StaticAnalysis analysis = new StaticAnalysis();
+            analysis.statisticalFeatures = calculateEnhancedStatistics(rawOutputs);
+            analysis.suspiciousPatterns = 0;
+
+            float avg = analysis.statisticalFeatures[1];
+            float std = analysis.statisticalFeatures[3];
+            float max = analysis.statisticalFeatures[5];
+            float min = analysis.statisticalFeatures[4];
+
+            int[] counts = countValueDistribution(rawOutputs);
+            int veryHighCount = counts[0];
+            int negativeCount = counts[4];
+
+            Log.e(TAG, String.format("🔍 Static Check: vHigh=%d, neg=%d, max=%.3f, std=%.3f",
+                    veryHighCount, negativeCount, max, std));
+
+            // Pattern 1: Classic static image (high values, low variance)
+            if (veryHighCount >= 4 && std < 0.1f && max > 0.995f) {
+                analysis.isStaticImage = true;
+                analysis.pattern = "ClassicStatic";
+                analysis.staticConfidence = 0.9f;
+                analysis.suspiciousPatterns += 3;
+                Log.e(TAG, "🚨 ClassicStatic pattern detected!");
+                return analysis;
             }
+
+            // Pattern 2: Photo/Screenshot pattern (the failing case)
+            if (veryHighCount >= 2 && max > 0.98f && negativeCount >= 2 && std > 0.3f) {
+                analysis.isStaticImage = true;
+                analysis.pattern = "PhotoStatic";
+                analysis.staticConfidence = 0.87f;
+                analysis.suspiciousPatterns += 3;
+                Log.e(TAG, "🚨 PhotoStatic pattern detected!");
+                return analysis;
+            }
+
+            // Pattern 3: High max with negatives
+            if (max > 0.985f && negativeCount >= 2 && veryHighCount >= 1) {
+                analysis.isStaticImage = true;
+                analysis.pattern = "HighMaxNegatives";
+                analysis.staticConfidence = 0.83f;
+                analysis.suspiciousPatterns += 2;
+                Log.e(TAG, "🚨 HighMaxNegatives pattern detected!");
+                return analysis;
+            }
+
+            // Pattern 4: Distance-specific static patterns
+            if (metrics.distanceCategory.equals("MEDIUM") && veryHighCount >= 3 && std < 0.3f) {
+                analysis.suspiciousPatterns += 1;
+            }
+
+            // Check for suspicious indicators
+            if (veryHighCount >= 3 && std < 0.4f) analysis.suspiciousPatterns += 1;
+            if (max > 0.99f && negativeCount >= 2) analysis.suspiciousPatterns += 1;
+            if (max > 0.985f && std > 0.35f && std < 0.5f) analysis.suspiciousPatterns += 1;
+
+            // Lower threshold for detection
+            analysis.isStaticImage = analysis.suspiciousPatterns >= 2;
+            analysis.staticConfidence = Math.min(0.95f, 0.6f + (analysis.suspiciousPatterns * 0.1f));
+
+            if (analysis.suspiciousPatterns > 0) {
+                Log.e(TAG, String.format("⚠️ Suspicious patterns: %d, isStatic: %s",
+                        analysis.suspiciousPatterns, analysis.isStaticImage));
+            }
+
+            return analysis;
         }
-
-        // If any frame detected static image pattern, override to fake
-        if (hasStaticPattern) {
-            Log.e(TAG, String.format("🚨 STATIC OVERRIDE: %d static detections found", staticDetections));
-            return new AnalysisResult(false, Math.min(95f, 85f + staticDetections * 3f), "StaticOverride-" + currentResult.method);
-        }
-
-        // Check for suspicious inconsistency (confidence varies too much for same static image)
-        float maxConfidence = 0f, minConfidence = 100f;
-        int realCount = 0;
-
-        for (AnalysisResult result : recentResults) {
-            maxConfidence = Math.max(maxConfidence, result.confidence);
-            minConfidence = Math.min(minConfidence, result.confidence);
-            if (result.isReal) realCount++;
-        }
-
-        // Detect inconsistent confidence pattern (suggests static image giving different results)
-        boolean suspiciousInconsistency = (maxConfidence - minConfidence) > 50f && recentResults.size() >= 3;
-
-        if (suspiciousInconsistency) {
-            Log.e(TAG, String.format("🚨 INCONSISTENT PATTERN: Confidence varies %.1f-%.1f (suggests static image)",
-                    minConfidence, maxConfidence));
-            return new AnalysisResult(false, 80f, "InconsistentStatic-" + currentResult.method);
-        }
-
-        // Normal temporal smoothing with reasonable thresholds
-        float avgConfidence = 0f;
-        for (AnalysisResult result : recentResults) {
-            avgConfidence += result.confidence;
-        }
-        avgConfidence /= recentResults.size();
-
-        // Require majority vote (60%) for real classification
-        boolean isReal = realCount >= Math.ceil(recentResults.size() * 0.6);
-
-        String method = "SmartTemporal-" + currentResult.method;
-
-        Log.e(TAG, String.format("🕐 Smart Temporal: %d samples, %d real votes, %d static detections, final: %s (%.1f%%)",
-                recentResults.size(), realCount, staticDetections, isReal ? "REAL" : "FAKE", avgConfidence));
-
-        return new AnalysisResult(isReal, Math.min(95f, Math.max(60f, avgConfidence)), method);
     }
 
-    private float calculateStandardDeviation(float[] values, float mean) {
-        float sumSquaredDiffs = 0f;
+    private static class LivenessAnalyzer {
+        private final List<float[]> recentOutputs = new ArrayList<>();
+
+        public LivenessAnalysis analyzeLiveness(float[] rawOutputs, FaceMetrics metrics) {
+            LivenessAnalysis analysis = new LivenessAnalysis();
+
+            // Store recent outputs for temporal analysis
+            recentOutputs.add(rawOutputs.clone());
+            if (recentOutputs.size() > 10) {
+                recentOutputs.remove(0);
+            }
+
+            // Calculate variability across recent frames
+            analysis.variabilityScore = calculateVariability();
+            analysis.movementScore = calculateMovement(metrics);
+
+            // Detect liveness patterns
+            StringBuilder indicators = new StringBuilder();
+            float livenessScore = 0f;
+
+            // Be more skeptical of variability
+            if (analysis.variabilityScore > 0.6f) {
+                livenessScore += 0.3f;
+                indicators.append("HighVariability ");
+            } else if (analysis.variabilityScore > 0.4f) {
+                livenessScore += 0.15f;
+                indicators.append("ModerateVariability ");
+            }
+
+            // Natural value distributions
+            int[] counts = countValueDistribution(rawOutputs);
+            if (counts[3] > 0 && counts[0] > 0 && counts[2] > 1) {
+                livenessScore += 0.2f;
+                indicators.append("NaturalDistribution ");
+            } else if (counts[3] > 0 && counts[0] > 0) {
+                livenessScore += 0.1f;
+                indicators.append("WeakNaturalDistribution ");
+            }
+
+            // Movement detection
+            if (analysis.movementScore > 0.5f) {
+                livenessScore += 0.25f;
+                indicators.append("Movement ");
+            } else if (analysis.movementScore > 0.3f) {
+                livenessScore += 0.1f;
+                indicators.append("WeakMovement ");
+            }
+
+            // Moderate statistics
+            float[] stats = calculateEnhancedStatistics(rawOutputs);
+            if (stats[3] > 0.5f && stats[3] < 0.7f) {
+                livenessScore += 0.15f;
+                indicators.append("NaturalVariance ");
+            } else if (stats[3] > 0.3f && stats[3] < 0.8f) {
+                livenessScore += 0.05f;
+                indicators.append("ModerateVariance ");
+            }
+
+            // Natural imperfections
+            if (stats[5] < 0.995f || counts[4] > 0) {
+                livenessScore += 0.05f;
+                indicators.append("NaturalImperfections ");
+            }
+
+            // Penalty for photo-like patterns
+            if (stats[5] > 0.985f && counts[4] >= 2) {
+                livenessScore -= 0.2f;
+                indicators.append("PhotoLikePenalty ");
+            }
+
+            analysis.livenessScore = Math.max(0f, livenessScore);
+            analysis.showsLiveness = analysis.livenessScore > LIVENESS_CONFIDENCE_THRESHOLD;
+            analysis.livenessIndicators = indicators.toString().trim();
+
+            return analysis;
+        }
+
+        private float calculateVariability() {
+            if (recentOutputs.size() < 3) return 0f;
+
+            float totalVariance = 0f;
+            int validComparisons = 0;
+
+            for (int i = 1; i < recentOutputs.size(); i++) {
+                float[] prev = recentOutputs.get(i - 1);
+                float[] curr = recentOutputs.get(i);
+
+                float frameVariance = 0f;
+                for (int j = 0; j < Math.min(prev.length, curr.length); j++) {
+                    frameVariance += Math.abs(prev[j] - curr[j]);
+                }
+                frameVariance /= prev.length;
+
+                totalVariance += frameVariance;
+                validComparisons++;
+            }
+
+            return validComparisons > 0 ? totalVariance / validComparisons : 0f;
+        }
+
+        private float calculateMovement(FaceMetrics currentMetrics) {
+            // This would be enhanced with actual face position tracking
+            // For now, use face size variations as proxy for movement
+            return Math.min(1f, currentMetrics.ratio * 2f); // Simplified
+        }
+    }
+
+    private static class TemporalAnalyzer {
+        public DetectionResult applyTemporalAnalysis(DetectionResult currentResult, List<DetectionResult> history) {
+            if (history.size() < MIN_FRAMES_FOR_TEMPORAL) {
+                return currentResult; // Not enough history
+            }
+
+            // Analyze recent decisions
+            List<DetectionResult> recent = history.subList(Math.max(0, history.size() - 10), history.size());
+
+            int realVotes = 0, fakeVotes = 0;
+            int staticDetections = 0;
+            float avgConfidence = 0f;
+
+            for (DetectionResult result : recent) {
+                if (result.isReal) realVotes++;
+                else fakeVotes++;
+
+                if (result.staticAnalysis != null && result.staticAnalysis.isStaticImage) {
+                    staticDetections++;
+                }
+
+                avgConfidence += result.confidence;
+            }
+
+            avgConfidence /= recent.size();
+
+            // Strong static override
+            if (staticDetections >= 3) {
+                return new DetectionResult(false, Math.min(95f, 80f + staticDetections * 2f),
+                        "TemporalStaticOverride-" + currentResult.method);
+            }
+
+            // Temporal consensus
+            if (realVotes > fakeVotes * 2) {
+                float confidence = Math.min(95f, avgConfidence + 10f);
+                return new DetectionResult(true, confidence, "TemporalReal-" + currentResult.method);
+            } else if (fakeVotes > realVotes * 2) {
+                float confidence = Math.min(95f, avgConfidence + 10f);
+                return new DetectionResult(false, confidence, "TemporalFake-" + currentResult.method);
+            }
+
+            // No strong consensus, return current with temporal context
+            String method = "TemporalUncertain-" + currentResult.method;
+            return new DetectionResult(currentResult.isReal, currentResult.confidence, method);
+        }
+    }
+
+    // Data classes
+
+    public static class DetectionResult {
+        public boolean isReal;
+        public float confidence;
+        public String method;
+        public float[] rawOutputs;
+        public FaceMetrics faceMetrics;
+        public long timestamp;
+        public StaticAnalysis staticAnalysis;
+        public LivenessAnalysis livenessAnalysis;
+
+        public DetectionResult(boolean isReal, float confidence, String method) {
+            this.isReal = isReal;
+            this.confidence = confidence;
+            this.method = method;
+            this.timestamp = System.currentTimeMillis();
+        }
+    }
+
+    public static class FaceMetrics {
+        public int faceArea;
+        public int imageArea;
+        public float ratio;
+        public int width, height;
+        public String distanceCategory;
+        public float distanceMultiplier;
+    }
+
+    public static class StaticAnalysis {
+        public boolean isStaticImage;
+        public float staticConfidence;
+        public String pattern;
+        public float[] statisticalFeatures;
+        public int suspiciousPatterns;
+    }
+
+    public static class LivenessAnalysis {
+        public boolean showsLiveness;
+        public float livenessScore;
+        public float variabilityScore;
+        public float movementScore;
+        public String livenessIndicators;
+    }
+
+    // Utility methods
+
+    private static float[] calculateEnhancedStatistics(float[] values) {
+        if (values.length == 0) return new float[8];
+
+        float sum = 0f, min = values[0], max = values[0];
         for (float value : values) {
-            float diff = value - mean;
-            sumSquaredDiffs += diff * diff;
+            sum += value;
+            min = Math.min(min, value);
+            max = Math.max(max, value);
         }
-        return (float) Math.sqrt(sumSquaredDiffs / values.length);
+
+        float avg = sum / values.length;
+        float variance = 0f;
+        float skewness = 0f;
+
+        for (float value : values) {
+            float diff = value - avg;
+            variance += diff * diff;
+            skewness += diff * diff * diff;
+        }
+
+        variance /= values.length;
+        float std = (float) Math.sqrt(variance);
+        skewness = variance > 0 ? skewness / (values.length * variance * std) : 0f;
+
+        return new float[]{sum, avg, variance, std, min, max, max - min, skewness};
     }
+
+    private static int[] countValueDistribution(float[] values) {
+        int veryHigh = 0, high = 0, moderate = 0, low = 0, negative = 0;
+
+        for (float value : values) {
+            if (value < 0) negative++;
+            else if (value < 0.3f) low++;
+            else if (value < 0.7f) moderate++;
+            else if (value < 0.95f) high++;
+            else veryHigh++;
+        }
+
+        return new int[]{veryHigh, high, moderate, low, negative};
+    }
+
+    // [Rest of methods from original implementation - preprocessing, inference, etc.]
 
     private ByteBuffer preprocessForMobileFaceNet(Bitmap bitmap) {
         ByteBuffer buffer = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4);
@@ -489,8 +767,8 @@ public class AntiSpoofingDetector {
             return outputs;
 
         } catch (Exception e) {
-            Log.e(TAG, "❌ Inference failed", e);
-            throw new RuntimeException("Inference failed", e);
+            Log.e(TAG, "❌ Advanced inference failed", e);
+            throw new RuntimeException("Advanced inference failed", e);
         }
     }
 
@@ -596,25 +874,57 @@ public class AntiSpoofingDetector {
         }
     }
 
+    // Logging methods
+
+    private void logFaceMetrics(FaceMetrics metrics) {
+        if (metrics == null) {
+            Log.e(TAG, "❌ Face metrics is null!");
+            return;
+        }
+        Log.e(TAG, String.format("📏 Face metrics: area=%d, imageArea=%d, ratio=%.3f, size=%dx%d, distance=%s (×%.1f)",
+                metrics.faceArea, metrics.imageArea, metrics.ratio, metrics.width, metrics.height,
+                metrics.distanceCategory != null ? metrics.distanceCategory : "UNKNOWN", metrics.distanceMultiplier));
+    }
+
+    private void logStaticAnalysis(StaticAnalysis analysis) {
+        if (analysis == null) {
+            Log.e(TAG, "❌ Static analysis is null!");
+            return;
+        }
+        Log.e(TAG, String.format("🖼️ Static Analysis: isStatic=%s, confidence=%.1f%%, pattern=%s, suspicious=%d",
+                analysis.isStaticImage, analysis.staticConfidence * 100,
+                analysis.pattern != null ? analysis.pattern : "None", analysis.suspiciousPatterns));
+    }
+
+    private void logLivenessAnalysis(LivenessAnalysis analysis) {
+        if (analysis == null) {
+            Log.e(TAG, "❌ Liveness analysis is null!");
+            return;
+        }
+        Log.e(TAG, String.format("🎭 Liveness Analysis: showsLiveness=%s, score=%.1f%%, variability=%.3f, movement=%.3f, indicators='%s'",
+                analysis.showsLiveness, analysis.livenessScore * 100, analysis.variabilityScore,
+                analysis.movementScore, analysis.livenessIndicators != null ? analysis.livenessIndicators : "None"));
+    }
+
+    private void logFinalResult(DetectionResult result) {
+        if (result == null) {
+            Log.e(TAG, "❌ Final result is null!");
+            return;
+        }
+        Log.e(TAG, "═══════════════════════════════════════════════════");
+        Log.e(TAG, String.format("🎯 FINAL RESULT - IsReal: %s, Confidence: %.1f%% (Method: %s)",
+                result.isReal, result.confidence, result.method != null ? result.method : "Unknown"));
+        Log.e(TAG, "═══════════════════════════════════════════════════");
+    }
+
     public void close() {
         if (interpreter != null) {
             interpreter.close();
             interpreter = null;
         }
         isModelLoaded = false;
-        recentResults.clear();
-    }
-
-    // Helper class for analysis results
-    private static class AnalysisResult {
-        final boolean isReal;
-        final float confidence;
-        final String method;
-
-        AnalysisResult(boolean isReal, float confidence, String method) {
-            this.isReal = isReal;
-            this.confidence = Math.min(95f, Math.max(60f, confidence));
-            this.method = method;
-        }
+        detectionHistory.clear();
+        livenessAnalyzer.recentOutputs.clear();
+        Log.e(TAG, "🔒 Advanced AntiSpoofingDetector closed");
     }
 }
