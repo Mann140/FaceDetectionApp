@@ -45,7 +45,7 @@ public class AntiSpoofingDetector {
     private final TemporalAnalyzer temporalAnalyzer = new TemporalAnalyzer();
 
     public AntiSpoofingDetector(Context context) {
-        Log.e(TAG, "🚀 AntiSpoofingDetector - Enhanced Static Detection v5.1");
+        Log.e(TAG, "🚀 AntiSpoofingDetector - Consistent Detection v5.3");
 
         try {
             loadModel(context);
@@ -324,37 +324,44 @@ public class AntiSpoofingDetector {
     }
 
     private float[] calculateAdaptiveThresholds(FaceMetrics metrics, StaticAnalysis staticAnalysis, LivenessAnalysis livenessAnalysis) {
-        float baseFakeThreshold = 55f;
-        float baseRealThreshold = 25f;
+        float baseFakeThreshold = 50f; // Balanced starting point
+        float baseRealThreshold = 30f;
 
-        // Adjust based on static analysis (most important)
-        if (staticAnalysis.suspiciousPatterns > 0) {
-            baseFakeThreshold -= staticAnalysis.suspiciousPatterns * 8f;
+        // Adjust based on static analysis - prioritize static detection
+        if (staticAnalysis.suspiciousPatterns >= 2) {
+            baseFakeThreshold -= staticAnalysis.suspiciousPatterns * 8f; // Strong adjustment for photos
+        } else if (staticAnalysis.suspiciousPatterns > 0) {
+            baseFakeThreshold -= staticAnalysis.suspiciousPatterns * 5f;
         }
 
-        // Adjust based on liveness
-        if (livenessAnalysis.livenessScore > 0.5f) {
-            baseRealThreshold += 10f;
-        } else if (livenessAnalysis.livenessScore < 0.3f) {
-            baseFakeThreshold -= 10f;
+        // Be more generous based on liveness - but not if static patterns exist
+        if (staticAnalysis.suspiciousPatterns == 0) {
+            if (livenessAnalysis.livenessScore > 0.4f) {
+                baseRealThreshold += 15f; // More generous for true liveness
+                baseFakeThreshold += 5f; // Harder to call fake
+            } else if (livenessAnalysis.livenessScore > 0.2f) {
+                baseRealThreshold += 10f; // Still generous
+            }
         }
 
-        // Photo-like pattern penalty
+        // Photo-like penalty should be strong
         if (livenessAnalysis.livenessIndicators != null &&
                 livenessAnalysis.livenessIndicators.contains("PhotoLikePenalty")) {
-            baseFakeThreshold -= 15f;
+            baseFakeThreshold -= 12f; // Strong penalty for photo patterns
         }
 
         // Distance adjustments
         if (metrics.distanceCategory.equals("VERY_FAR")) {
             baseFakeThreshold -= 5f;
-        } else if (metrics.distanceCategory.equals("VERY_CLOSE")) {
-            baseFakeThreshold += 5f;
+            baseRealThreshold += 5f;
+        } else if (metrics.distanceCategory.equals("VERY_CLOSE") || metrics.distanceCategory.equals("CLOSE")) {
+            baseFakeThreshold += 3f;
+            baseRealThreshold += 8f; // More lenient for close faces
         }
 
         // Bounds checking
-        baseFakeThreshold = Math.max(20f, Math.min(80f, baseFakeThreshold));
-        baseRealThreshold = Math.max(5f, Math.min(50f, baseRealThreshold));
+        baseFakeThreshold = Math.max(20f, Math.min(75f, baseFakeThreshold));
+        baseRealThreshold = Math.max(10f, Math.min(60f, baseRealThreshold));
 
         return new float[]{baseFakeThreshold, baseRealThreshold};
     }
@@ -386,19 +393,23 @@ public class AntiSpoofingDetector {
         // Static image indicators (most important)
         score += staticAnalysis.suspiciousPatterns * 3f;
 
-        // Photo-specific patterns
-        if (counts[0] >= 2 && stats[5] > 0.985f && counts[4] >= 2) {
-            score += 4f; // High max with negatives - photo pattern
+        // Photo-specific patterns - CONSISTENT DETECTION
+        if (counts[0] >= 1 && stats[5] > 0.98f && counts[4] >= 2 && stats[1] > 0.15f) {
+            score += 5f; // Strong photo pattern - lowered threshold
         }
 
-        // Extreme value patterns
-        if (counts[0] >= 4 && counts[4] >= 2) score += 3f;
-        if (stats[5] > 0.998f) score += 2f;
-        if (stats[3] < 0.1f) score += 2f;
+        // Very extreme patterns
+        if (counts[0] >= 2 && stats[5] > 0.97f && counts[4] >= 2 && stats[3] > 0.3f) {
+            score += 4f; // High contrast photo pattern
+        }
 
-        // Bi-modal distribution
-        if ((counts[0] + counts[4]) >= 4 && (counts[1] + counts[2]) <= 1) {
-            score += 3f;
+        if (stats[5] > 0.995f && stats[3] < 0.1f) {
+            score += 3f; // Extremely high max with very low variance
+        }
+
+        // Strong bi-modal distribution
+        if ((counts[0] + counts[4]) >= 4 && (counts[1] + counts[2]) <= 2) {
+            score += 2f; // Photo-like distribution
         }
 
         return score;
@@ -424,49 +435,68 @@ public class AntiSpoofingDetector {
             Log.e(TAG, String.format("🔍 Static Check: vHigh=%d, neg=%d, max=%.3f, std=%.3f",
                     veryHighCount, negativeCount, max, std));
 
-            // Pattern 1: Classic static image (high values, low variance)
-            if (veryHighCount >= 4 && std < 0.1f && max > 0.995f) {
+            // Pattern 1: Classic static image (very high values, low variance)
+            if (veryHighCount >= 5 && std < 0.05f && max > 0.998f) {
                 analysis.isStaticImage = true;
                 analysis.pattern = "ClassicStatic";
-                analysis.staticConfidence = 0.9f;
+                analysis.staticConfidence = 0.95f;
                 analysis.suspiciousPatterns += 3;
                 Log.e(TAG, "🚨 ClassicStatic pattern detected!");
                 return analysis;
             }
 
-            // Pattern 2: Photo/Screenshot pattern (the failing case)
-            if (veryHighCount >= 2 && max > 0.98f && negativeCount >= 2 && std > 0.3f) {
+            // Pattern 2: Photo/Screenshot pattern - CONSISTENT DETECTION
+            if (max > 0.98f && veryHighCount >= 1 && negativeCount >= 2 && std > 0.3f && avg > 0.15f) {
                 analysis.isStaticImage = true;
                 analysis.pattern = "PhotoStatic";
-                analysis.staticConfidence = 0.87f;
+                analysis.staticConfidence = 0.90f;
                 analysis.suspiciousPatterns += 3;
                 Log.e(TAG, "🚨 PhotoStatic pattern detected!");
                 return analysis;
             }
 
-            // Pattern 3: High max with negatives
-            if (max > 0.985f && negativeCount >= 2 && veryHighCount >= 1) {
+            // Pattern 3: Strong photo indicators - LOWER THRESHOLD
+            if (max > 0.975f && veryHighCount >= 1 && negativeCount >= 2 && avg > 0.1f) {
                 analysis.isStaticImage = true;
-                analysis.pattern = "HighMaxNegatives";
-                analysis.staticConfidence = 0.83f;
-                analysis.suspiciousPatterns += 2;
-                Log.e(TAG, "🚨 HighMaxNegatives pattern detected!");
+                analysis.pattern = "StrongPhotoStatic";
+                analysis.staticConfidence = 0.88f;
+                analysis.suspiciousPatterns += 3;
+                Log.e(TAG, "🚨 StrongPhotoStatic pattern detected!");
                 return analysis;
             }
 
-            // Pattern 4: Distance-specific static patterns
-            if (metrics.distanceCategory.equals("MEDIUM") && veryHighCount >= 3 && std < 0.3f) {
-                analysis.suspiciousPatterns += 1;
+            // Pattern 4: High contrast photo pattern
+            if (max > 0.95f && std > 0.35f && negativeCount >= 3 && veryHighCount >= 1) {
+                analysis.isStaticImage = true;
+                analysis.pattern = "HighContrastPhoto";
+                analysis.staticConfidence = 0.85f;
+                analysis.suspiciousPatterns += 3;
+                Log.e(TAG, "🚨 HighContrastPhoto pattern detected!");
+                return analysis;
             }
 
-            // Check for suspicious indicators
-            if (veryHighCount >= 3 && std < 0.4f) analysis.suspiciousPatterns += 1;
-            if (max > 0.99f && negativeCount >= 2) analysis.suspiciousPatterns += 1;
-            if (max > 0.985f && std > 0.35f && std < 0.5f) analysis.suspiciousPatterns += 1;
+            // Only add suspicious patterns for moderate cases
+            // Pattern 5: Very high values with moderate variance
+            if (veryHighCount >= 2 && std > 0.25f && max > 0.94f) {
+                analysis.suspiciousPatterns += 1;
+                Log.e(TAG, "⚠️ High contrast pattern");
+            }
 
-            // Lower threshold for detection
+            // Pattern 6: Extreme max with many negatives
+            if (max > 0.97f && negativeCount >= 3) {
+                analysis.suspiciousPatterns += 1;
+                Log.e(TAG, "⚠️ Extreme range pattern");
+            }
+
+            // Pattern 7: Photo-like distribution
+            if (max > 0.92f && std > 0.4f && avg > 0.2f) {
+                analysis.suspiciousPatterns += 1;
+                Log.e(TAG, "⚠️ Photo-like distribution");
+            }
+
+            // Require multiple suspicious patterns for static detection
             analysis.isStaticImage = analysis.suspiciousPatterns >= 2;
-            analysis.staticConfidence = Math.min(0.95f, 0.6f + (analysis.suspiciousPatterns * 0.1f));
+            analysis.staticConfidence = Math.min(0.95f, 0.65f + (analysis.suspiciousPatterns * 0.1f));
 
             if (analysis.suspiciousPatterns > 0) {
                 Log.e(TAG, String.format("⚠️ Suspicious patterns: %d, isStatic: %s",
@@ -493,57 +523,57 @@ public class AntiSpoofingDetector {
             analysis.variabilityScore = calculateVariability();
             analysis.movementScore = calculateMovement(metrics);
 
-            // Detect liveness patterns
+            // Detect liveness patterns - BE MORE GENEROUS TO REAL FACES
             StringBuilder indicators = new StringBuilder();
             float livenessScore = 0f;
 
-            // Be more skeptical of variability
-            if (analysis.variabilityScore > 0.6f) {
-                livenessScore += 0.3f;
+            // More generous variability scoring
+            if (analysis.variabilityScore > 0.5f) {
+                livenessScore += 0.35f; // Increased bonus
                 indicators.append("HighVariability ");
-            } else if (analysis.variabilityScore > 0.4f) {
-                livenessScore += 0.15f;
+            } else if (analysis.variabilityScore > 0.3f) {
+                livenessScore += 0.2f; // Increased bonus
                 indicators.append("ModerateVariability ");
+            } else if (analysis.variabilityScore > 0.1f) {
+                livenessScore += 0.1f; // Bonus for any variability
+                indicators.append("SomeVariability ");
             }
 
-            // Natural value distributions
+            // Natural value distributions - more generous
             int[] counts = countValueDistribution(rawOutputs);
-            if (counts[3] > 0 && counts[0] > 0 && counts[2] > 1) {
-                livenessScore += 0.2f;
+            if (counts[3] > 0 && counts[0] >= 0) { // Even without high values
+                livenessScore += 0.25f; // Increased bonus
                 indicators.append("NaturalDistribution ");
-            } else if (counts[3] > 0 && counts[0] > 0) {
-                livenessScore += 0.1f;
-                indicators.append("WeakNaturalDistribution ");
             }
 
-            // Movement detection
-            if (analysis.movementScore > 0.5f) {
-                livenessScore += 0.25f;
+            // Movement detection - more generous
+            if (analysis.movementScore > 0.4f) {
+                livenessScore += 0.3f; // Increased bonus
                 indicators.append("Movement ");
-            } else if (analysis.movementScore > 0.3f) {
-                livenessScore += 0.1f;
-                indicators.append("WeakMovement ");
+            } else if (analysis.movementScore > 0.2f) {
+                livenessScore += 0.15f; // Generous for any movement
+                indicators.append("SomeMovement ");
             }
 
-            // Moderate statistics
+            // Moderate statistics - more generous range
             float[] stats = calculateEnhancedStatistics(rawOutputs);
-            if (stats[3] > 0.5f && stats[3] < 0.7f) {
-                livenessScore += 0.15f;
+            if (stats[3] > 0.4f && stats[3] < 0.8f) { // Wider range
+                livenessScore += 0.2f; // Increased bonus
                 indicators.append("NaturalVariance ");
-            } else if (stats[3] > 0.3f && stats[3] < 0.8f) {
-                livenessScore += 0.05f;
+            } else if (stats[3] > 0.2f) {
+                livenessScore += 0.1f; // Bonus for reasonable variance
                 indicators.append("ModerateVariance ");
             }
 
-            // Natural imperfections
-            if (stats[5] < 0.995f || counts[4] > 0) {
-                livenessScore += 0.05f;
+            // Natural imperfections - more generous
+            if (stats[5] < 0.98f || counts[4] > 0) { // More lenient threshold
+                livenessScore += 0.1f; // Increased bonus
                 indicators.append("NaturalImperfections ");
             }
 
-            // Penalty for photo-like patterns
-            if (stats[5] > 0.985f && counts[4] >= 2) {
-                livenessScore -= 0.2f;
+            // Reduced penalties for borderline cases
+            if (stats[5] > 0.98f && counts[4] >= 3 && stats[1] > 0.2f && counts[0] >= 1) {
+                livenessScore -= 0.15f; // Penalty for clear photo patterns
                 indicators.append("PhotoLikePenalty ");
             }
 
