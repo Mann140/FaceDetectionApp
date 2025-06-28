@@ -14,23 +14,98 @@ android {
         versionName "1.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        // Performance optimizations
+        vectorDrawables.useSupportLibrary = true
+
+        // Native code optimizations
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            // Performance optimizations for release builds
+            debuggable false
+            jniDebuggable false
+            renderscriptDebuggable false
+            zipAlignEnabled true
+
+            // Compiler optimizations
+            manifestPlaceholders = [enableCrashReporting: "true"]
+        }
+
+        debug {
+            // Performance optimizations for debug builds
+            minifyEnabled false
+            shrinkResources false
+            debuggable true
+
+            // Faster build times
+            manifestPlaceholders = [enableCrashReporting: "false"]
         }
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+
+        // Enable incremental compilation
+        incremental true
     }
+
     buildToolsVersion '35.0.0'
 
-    // Add this to prevent compression of .tflite files
+    // Performance optimizations for packaging
+    packagingOptions {
+        // Exclude unnecessary files
+        excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE',
+                'META-INF/LICENSE.txt',
+                'META-INF/NOTICE',
+                'META-INF/NOTICE.txt',
+                'META-INF/ASL2.0',
+                'META-INF/*.kotlin_module'
+        ]
+    }
+
+    // Optimize .tflite files
     aaptOptions {
         noCompress "tflite"
+        ignoreAssetsPattern "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
+    }
+
+    // Dex optimizations
+    dexOptions {
+        preDexLibraries true
+        maxProcessCount 4
+        javaMaxHeapSize "4g"
+    }
+
+    // Lint optimizations
+    lintOptions {
+        checkReleaseBuilds false
+        abortOnError false
+        disable 'MissingTranslation'
+    }
+
+    // Bundle optimizations
+    bundle {
+        language {
+            enableSplit = true
+        }
+        density {
+            enableSplit = true
+        }
+        abi {
+            enableSplit = true
+        }
     }
 }
 
@@ -54,4 +129,19 @@ dependencies {
     implementation 'com.google.ai.edge.litert:litert:1.0.1'
     implementation 'com.google.ai.edge.litert:litert-support-api:1.0.1'
 
+    // Performance monitoring (optional - remove if not needed)
+    // implementation 'androidx.benchmark:benchmark-common:1.2.4'
+}
+
+// Performance optimization tasks
+android.applicationVariants.all { variant ->
+    variant.outputs.all { output ->
+        // Optimize APK naming
+        def project = "FaceDetectionApp"
+        def buildType = variant.buildType.name
+        def version = variant.versionName
+        def date = new Date().format('yyyyMMdd')
+
+        outputFileName = "${project}-${buildType}-v${version}-${date}.apk"
+    }
 }

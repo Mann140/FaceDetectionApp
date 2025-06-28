@@ -16,208 +16,431 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class FaceOverlayView extends View {
-    private final List<MainActivity.FaceData> faceDataList = new ArrayList<>();
+
+    // Performance optimization fields
+    private final List<MainActivity.FaceData> currentFaceDataList = new ArrayList<>();
+    private final List<MainActivity.FaceData> previousFaceDataList = new ArrayList<>();
+    private volatile boolean needsRedraw = false;
+    private volatile long lastDrawTime = 0;
+
+    // Scale factors cached for performance
+    private volatile float scaleX = 1f;
+    private volatile float scaleY = 1f;
+    private volatile int lastImageWidth = 0;
+    private volatile int lastImageHeight = 0;
+
+    // Performance configuration
+    private static final long MIN_REDRAW_INTERVAL = 33; // ~30 FPS max
+    private static final float SCALE_EPSILON = 0.001f; // Threshold for scale changes
+
+    // Pre-allocated paint objects for performance
     private final Paint realFacePaint;
     private final Paint fakeFacePaint;
-    private final Paint depthPaint;
     private final Paint textPaint;
     private final Paint badgePaint;
     private final Paint confidencePaint;
     private final Paint methodPaint;
-    private float scaleX = 1f;
-    private float scaleY = 1f;
+    private final Paint borderPaint;
+    private final Paint bgPaint;
+    private final Paint warningPaint;
+    private final Paint iconPaint;
+    private final Paint effectPaint;
+    private final Paint mlPaint;
+
+    // Pre-allocated objects for drawing efficiency
+    private final RectF tempRectF = new RectF();
+    private final Path tempPath = new Path();
+    private final float[] intervals = {20f, 10f};
+
+    // Gradient cache for performance
+    private LinearGradient cachedGradient;
+    private float lastGradientLeft = Float.NaN;
+    private float lastGradientTop = Float.NaN;
+    private float lastGradientRight = Float.NaN;
+    private float lastGradientBottom = Float.NaN;
 
     public FaceOverlayView(Context context, AttributeSet attrs) {
         super(context, attrs);
 
-        // Paint for real faces (gradient green)
-        realFacePaint = new Paint();
-        realFacePaint.setStyle(Paint.Style.STROKE);
-        realFacePaint.setStrokeWidth(6f);
-        realFacePaint.setAntiAlias(true);
-
-        // Paint for fake faces (red)
-        fakeFacePaint = new Paint();
-        fakeFacePaint.setStyle(Paint.Style.STROKE);
-        fakeFacePaint.setStrokeWidth(6f);
-        fakeFacePaint.setColor(0xFFFF4444);
-        fakeFacePaint.setAntiAlias(true);
-
-        // Paint for depth indicator
-        depthPaint = new Paint();
-        depthPaint.setStyle(Paint.Style.FILL);
-        depthPaint.setAntiAlias(true);
-
-        // Paint for text
-        textPaint = new Paint();
-        textPaint.setColor(Color.WHITE);
-        textPaint.setTextSize(28f);
-        textPaint.setAntiAlias(true);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setShadowLayer(4f, 2f, 2f, Color.BLACK);
-
-        // Paint for badges
-        badgePaint = new Paint();
-        badgePaint.setAntiAlias(true);
-
-        // Paint for confidence meter
-        confidencePaint = new Paint();
-        confidencePaint.setAntiAlias(true);
-
-        // Paint for detection method
-        methodPaint = new Paint();
-        methodPaint.setColor(Color.WHITE);
-        methodPaint.setTextSize(20f);
-        methodPaint.setAntiAlias(true);
-        methodPaint.setTextAlign(Paint.Align.CENTER);
-        methodPaint.setShadowLayer(2f, 1f, 1f, Color.BLACK);
+        // Initialize all paint objects once for performance
+        realFacePaint = createRealFacePaint();
+        fakeFacePaint = createFakeFacePaint();
+        textPaint = createTextPaint();
+        badgePaint = createBadgePaint();
+        confidencePaint = createConfidencePaint();
+        methodPaint = createMethodPaint();
+        borderPaint = createBorderPaint();
+        bgPaint = createBackgroundPaint();
+        warningPaint = createWarningPaint();
+        iconPaint = createIconPaint();
+        effectPaint = createEffectPaint();
+        mlPaint = createMLPaint();
     }
 
-    // Method for ML detection
+    // ========== PAINT FACTORY METHODS ==========
+
+    private Paint createRealFacePaint() {
+        Paint paint = new Paint();
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(6f);
+        paint.setAntiAlias(true);
+        return paint;
+    }
+
+    private Paint createFakeFacePaint() {
+        Paint paint = new Paint();
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(6f);
+        paint.setColor(0xFFFF4444);
+        paint.setAntiAlias(true);
+        paint.setPathEffect(new android.graphics.DashPathEffect(intervals, 0));
+        return paint;
+    }
+
+    private Paint createTextPaint() {
+        Paint paint = new Paint();
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(28f);
+        paint.setAntiAlias(true);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setShadowLayer(4f, 2f, 2f, Color.BLACK);
+        return paint;
+    }
+
+    private Paint createBadgePaint() {
+        Paint paint = new Paint();
+        paint.setAntiAlias(true);
+        paint.setStyle(Paint.Style.FILL);
+        return paint;
+    }
+
+    private Paint createConfidencePaint() {
+        Paint paint = new Paint();
+        paint.setAntiAlias(true);
+        paint.setStyle(Paint.Style.FILL);
+        return paint;
+    }
+
+    private Paint createMethodPaint() {
+        Paint paint = new Paint();
+        paint.setColor(Color.WHITE);
+        paint.setTextSize(20f);
+        paint.setAntiAlias(true);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setShadowLayer(2f, 1f, 1f, Color.BLACK);
+        return paint;
+    }
+
+    private Paint createBorderPaint() {
+        Paint paint = new Paint();
+        paint.setColor(Color.WHITE);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2f);
+        paint.setAntiAlias(true);
+        return paint;
+    }
+
+    private Paint createBackgroundPaint() {
+        Paint paint = new Paint();
+        paint.setColor(0x44FFFFFF);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setAntiAlias(true);
+        return paint;
+    }
+
+    private Paint createWarningPaint() {
+        Paint paint = new Paint();
+        paint.setColor(0xFFFF9900);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setAntiAlias(true);
+        return paint;
+    }
+
+    private Paint createIconPaint() {
+        Paint paint = new Paint();
+        paint.setColor(Color.BLACK);
+        paint.setTextSize(16f);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        paint.setAntiAlias(true);
+        return paint;
+    }
+
+    private Paint createEffectPaint() {
+        Paint paint = new Paint();
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2f);
+        paint.setColor(0x4400FF00);
+        paint.setAntiAlias(true);
+        return paint;
+    }
+
+    private Paint createMLPaint() {
+        Paint paint = new Paint();
+        paint.setAntiAlias(true);
+        paint.setTextSize(16f);
+        paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        return paint;
+    }
+
+    // ========== OPTIMIZED PUBLIC METHODS ==========
+
+    public void setFacesWithMLOptimized(List<MainActivity.FaceData> faceData, int imageWidth, int imageHeight) {
+        // Check if we actually need to update
+        if (!hasSignificantChanges(faceData, imageWidth, imageHeight)) {
+            return;
+        }
+
+        // Update face data efficiently
+        synchronized (currentFaceDataList) {
+            currentFaceDataList.clear();
+            if (faceData != null) {
+                currentFaceDataList.addAll(faceData);
+            }
+        }
+
+        // Update scale factors only if dimensions changed significantly
+        updateScaleFactorsIfNeeded(imageWidth, imageHeight);
+
+        // Mark for redraw with throttling
+        scheduleRedrawIfNeeded();
+    }
+
+    // Backward compatibility methods
     public void setFacesWithML(List<MainActivity.FaceData> faceData, int imageWidth, int imageHeight) {
-        faceDataList.clear();
-        faceDataList.addAll(faceData);
-
-        // Calculate scale factors
-        scaleX = (float) getWidth() / imageHeight;
-        scaleY = (float) getHeight() / imageWidth;
-
-        invalidate();
+        setFacesWithMLOptimized(faceData, imageWidth, imageHeight);
     }
 
-    // Method for depth detection (backward compatibility)
     public void setFacesWithDepth(List<MainActivity.FaceData> faceData, int imageWidth, int imageHeight) {
-        setFacesWithML(faceData, imageWidth, imageHeight);
+        setFacesWithMLOptimized(faceData, imageWidth, imageHeight);
     }
 
-    // Method for basic auth (backward compatibility)
     public void setFacesWithAuth(List<MainActivity.FaceData> faceData, int imageWidth, int imageHeight) {
-        setFacesWithML(faceData, imageWidth, imageHeight);
+        setFacesWithMLOptimized(faceData, imageWidth, imageHeight);
     }
+
+    // ========== PERFORMANCE OPTIMIZATION METHODS ==========
+
+    private boolean hasSignificantChanges(List<MainActivity.FaceData> newFaceData, int imageWidth, int imageHeight) {
+        // Check dimension changes
+        if (lastImageWidth != imageWidth || lastImageHeight != imageHeight) {
+            return true;
+        }
+
+        // Check face count changes
+        synchronized (currentFaceDataList) {
+            if (currentFaceDataList.size() != (newFaceData != null ? newFaceData.size() : 0)) {
+                return true;
+            }
+
+            // Quick comparison of face data
+            if (newFaceData != null) {
+                for (int i = 0; i < newFaceData.size() && i < currentFaceDataList.size(); i++) {
+                    if (hasFaceDataChanged(currentFaceDataList.get(i), newFaceData.get(i))) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private boolean hasFaceDataChanged(MainActivity.FaceData oldData, MainActivity.FaceData newData) {
+        if (oldData == null || newData == null) return true;
+
+        return oldData.isReal != newData.isReal ||
+                Math.abs(oldData.confidence - newData.confidence) > 1.0f ||
+                !oldData.boundingBox.equals(newData.boundingBox) ||
+                !oldData.detectionMethod.equals(newData.detectionMethod);
+    }
+
+    private void updateScaleFactorsIfNeeded(int imageWidth, int imageHeight) {
+        if (lastImageWidth != imageWidth || lastImageHeight != imageHeight) {
+            lastImageWidth = imageWidth;
+            lastImageHeight = imageHeight;
+
+            if (getWidth() > 0 && getHeight() > 0 && imageWidth > 0 && imageHeight > 0) {
+                float newScaleX = (float) getWidth() / imageHeight;
+                float newScaleY = (float) getHeight() / imageWidth;
+
+                // Only update if the change is significant
+                if (Math.abs(scaleX - newScaleX) > SCALE_EPSILON ||
+                        Math.abs(scaleY - newScaleY) > SCALE_EPSILON) {
+                    scaleX = newScaleX;
+                    scaleY = newScaleY;
+
+                    // Clear gradient cache when scale changes
+                    cachedGradient = null;
+                }
+            }
+        }
+    }
+
+    private void scheduleRedrawIfNeeded() {
+        long currentTime = System.currentTimeMillis();
+
+        // Throttle redraws for performance
+        if (currentTime - lastDrawTime >= MIN_REDRAW_INTERVAL) {
+            needsRedraw = true;
+            invalidate();
+            lastDrawTime = currentTime;
+        } else {
+            // Schedule a delayed redraw
+            if (!needsRedraw) {
+                needsRedraw = true;
+                postDelayed(() -> {
+                    if (needsRedraw) {
+                        invalidate();
+                        lastDrawTime = System.currentTimeMillis();
+                        needsRedraw = false;
+                    }
+                }, MIN_REDRAW_INTERVAL - (currentTime - lastDrawTime));
+            }
+        }
+    }
+
+    // ========== OPTIMIZED DRAWING ==========
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        for (MainActivity.FaceData faceData : faceDataList) {
-            Rect face = faceData.boundingBox;
-
-            // Transform coordinates
-            float left = face.left * scaleX - 20;
-            float top = face.top * scaleY - 20;
-            float right = face.right * scaleX + 20;
-            float bottom = face.bottom * scaleY + 20;
-
-            // Draw based on detection result
-            if (faceData.isReal) {
-                drawRealFace(canvas, left, top, right, bottom, faceData);
-            } else {
-                drawFakeFace(canvas, left, top, right, bottom, faceData);
-            }
-
-            // Draw confidence meter
-            drawConfidenceMeter(canvas, right + 10, top, faceData.confidence);
-
-            // Draw detection method
-            canvas.drawText(faceData.detectionMethod,
-                    (left + right) / 2, top - 10, methodPaint);
+        // Copy face data to avoid blocking other threads
+        List<MainActivity.FaceData> faceDataCopy = new ArrayList<>();
+        synchronized (currentFaceDataList) {
+            faceDataCopy.addAll(currentFaceDataList);
         }
+
+        // Draw faces efficiently
+        for (MainActivity.FaceData faceData : faceDataCopy) {
+            drawFaceOptimized(canvas, faceData);
+        }
+
+        needsRedraw = false;
     }
 
-    private void drawRealFace(Canvas canvas, float left, float top, float right, float bottom,
-                              MainActivity.FaceData faceData) {
-        // Create gradient based on confidence
-        int startColor = Color.GREEN;
-        int endColor = Color.argb(255, 0, (int)(255 * faceData.confidence / 100f), 0);
+    private void drawFaceOptimized(Canvas canvas, MainActivity.FaceData faceData) {
+        Rect face = faceData.boundingBox;
 
-        LinearGradient gradient = new LinearGradient(
-                left, top, right, bottom,
-                new int[]{startColor, endColor},
-                null, Shader.TileMode.CLAMP
-        );
+        // Transform coordinates efficiently
+        float left = face.left * scaleX - 20;
+        float top = face.top * scaleY - 20;
+        float right = face.right * scaleX + 20;
+        float bottom = face.bottom * scaleY + 20;
+
+        // Draw based on detection result
+        if (faceData.isReal) {
+            drawRealFaceOptimized(canvas, left, top, right, bottom, faceData);
+        } else {
+            drawFakeFaceOptimized(canvas, left, top, right, bottom, faceData);
+        }
+
+        // Draw additional elements
+        drawConfidenceMeterOptimized(canvas, right + 10, top, faceData.confidence);
+
+        // Draw detection method
+        canvas.drawText(faceData.detectionMethod, (left + right) / 2, top - 10, methodPaint);
+    }
+
+    private void drawRealFaceOptimized(Canvas canvas, float left, float top, float right, float bottom,
+                                       MainActivity.FaceData faceData) {
+
+        // Use cached gradient or create new one
+        LinearGradient gradient = getCachedGradient(left, top, right, bottom, faceData.confidence);
         realFacePaint.setShader(gradient);
 
-        // Draw main frame
-        RectF rect = new RectF(left, top, right, bottom);
-        canvas.drawRoundRect(rect, 20f, 20f, realFacePaint);
+        // Draw main frame efficiently
+        tempRectF.set(left, top, right, bottom);
+        canvas.drawRoundRect(tempRectF, 20f, 20f, realFacePaint);
 
         // Draw "REAL" label with confidence
         String label = String.format("REAL %.0f%%", faceData.confidence);
         canvas.drawText(label, (left + right) / 2, bottom + 30, textPaint);
 
         // Draw ML indicator
-        drawMLIndicator(canvas, left - 10, top - 10, true);
+        drawMLIndicatorOptimized(canvas, left - 10, top - 10, true);
 
         // Draw 3D effects if has depth info
         if (faceData.has3DStructure) {
-            draw3DEffects(canvas, left, top, right, bottom);
+            draw3DEffectsOptimized(canvas, left, top, right, bottom);
         }
     }
 
-    private void drawFakeFace(Canvas canvas, float left, float top, float right, float bottom,
-                              MainActivity.FaceData faceData) {
-        // Draw with dashed line for fake
-        float[] intervals = {20f, 10f};
-        fakeFacePaint.setPathEffect(new android.graphics.DashPathEffect(intervals, 0));
+    private void drawFakeFaceOptimized(Canvas canvas, float left, float top, float right, float bottom,
+                                       MainActivity.FaceData faceData) {
 
-        RectF rect = new RectF(left, top, right, bottom);
-        canvas.drawRoundRect(rect, 20f, 20f, fakeFacePaint);
+        // Draw with pre-configured dashed line
+        tempRectF.set(left, top, right, bottom);
+        canvas.drawRoundRect(tempRectF, 20f, 20f, fakeFacePaint);
 
         // Draw "FAKE" label
         String label = String.format("FAKE %.0f%%", 100 - faceData.confidence);
         canvas.drawText(label, (left + right) / 2, bottom + 30, textPaint);
 
         // Draw warning icon
-        drawWarningIcon(canvas, right - 30, top + 10);
+        drawWarningIconOptimized(canvas, right - 30, top + 10);
 
         // Draw ML indicator
-        drawMLIndicator(canvas, left - 10, top - 10, false);
+        drawMLIndicatorOptimized(canvas, left - 10, top - 10, false);
     }
 
-    private void drawConfidenceMeter(Canvas canvas, float x, float y, float confidence) {
+    private LinearGradient getCachedGradient(float left, float top, float right, float bottom, float confidence) {
+        // Check if we can reuse the cached gradient
+        if (cachedGradient != null &&
+                Math.abs(lastGradientLeft - left) < 1f &&
+                Math.abs(lastGradientTop - top) < 1f &&
+                Math.abs(lastGradientRight - right) < 1f &&
+                Math.abs(lastGradientBottom - bottom) < 1f) {
+            return cachedGradient;
+        }
+
+        // Create new gradient and cache it
+        int startColor = Color.GREEN;
+        int endColor = Color.argb(255, 0, (int)(255 * confidence / 100f), 0);
+
+        cachedGradient = new LinearGradient(
+                left, top, right, bottom,
+                new int[]{startColor, endColor},
+                null, Shader.TileMode.CLAMP
+        );
+
+        // Cache the parameters
+        lastGradientLeft = left;
+        lastGradientTop = top;
+        lastGradientRight = right;
+        lastGradientBottom = bottom;
+
+        return cachedGradient;
+    }
+
+    private void drawConfidenceMeterOptimized(Canvas canvas, float x, float y, float confidence) {
         float meterWidth = 10f;
         float meterHeight = 100f;
 
         // Background
-        Paint bgPaint = new Paint();
-        bgPaint.setColor(0x44FFFFFF);
-        bgPaint.setStyle(Paint.Style.FILL);
         canvas.drawRect(x, y, x + meterWidth, y + meterHeight, bgPaint);
 
         // Confidence level
         float fillHeight = (confidence / 100f) * meterHeight;
-        int color = getConfidenceColor(confidence);
+        int color = getConfidenceColorOptimized(confidence);
         confidencePaint.setColor(color);
-        confidencePaint.setStyle(Paint.Style.FILL);
 
         canvas.drawRect(x, y + meterHeight - fillHeight, x + meterWidth, y + meterHeight, confidencePaint);
 
         // Border
-        Paint borderPaint = new Paint();
-        borderPaint.setColor(Color.WHITE);
-        borderPaint.setStyle(Paint.Style.STROKE);
-        borderPaint.setStrokeWidth(2f);
         canvas.drawRect(x, y, x + meterWidth, y + meterHeight, borderPaint);
     }
 
-    private int getConfidenceColor(float confidence) {
-        if (confidence > 80) {
-            return 0xFF00FF00; // Green
-        } else if (confidence > 60) {
-            return 0xFFFFFF00; // Yellow
-        } else if (confidence > 40) {
-            return 0xFFFF9900; // Orange
-        } else {
-            return 0xFFFF0000; // Red
-        }
+    private int getConfidenceColorOptimized(float confidence) {
+        // Pre-computed color values for performance
+        if (confidence > 80) return 0xFF00FF00; // Green
+        if (confidence > 60) return 0xFFFFFF00; // Yellow
+        if (confidence > 40) return 0xFFFF9900; // Orange
+        return 0xFFFF0000; // Red
     }
 
-    private void drawMLIndicator(Canvas canvas, float x, float y, boolean isReal) {
-        Paint mlPaint = new Paint();
-        mlPaint.setAntiAlias(true);
-        mlPaint.setTextSize(16f);
-        mlPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-
+    private void drawMLIndicatorOptimized(Canvas canvas, float x, float y, boolean isReal) {
         if (isReal) {
             mlPaint.setColor(0xFF00FF00);
             canvas.drawText("ML✓", x, y, mlPaint);
@@ -227,95 +450,73 @@ public class FaceOverlayView extends View {
         }
     }
 
-    private void drawWarningIcon(Canvas canvas, float x, float y) {
-        Paint warningPaint = new Paint();
-        warningPaint.setColor(0xFFFF9900);
-        warningPaint.setStyle(Paint.Style.FILL);
-        warningPaint.setAntiAlias(true);
+    private void drawWarningIconOptimized(Canvas canvas, float x, float y) {
+        // Draw triangle warning using pre-allocated path
+        tempPath.reset();
+        tempPath.moveTo(x, y + 20);
+        tempPath.lineTo(x - 15, y);
+        tempPath.lineTo(x + 15, y);
+        tempPath.close();
 
-        // Draw triangle warning
-        Path path = new Path();
-        path.moveTo(x, y + 20);
-        path.lineTo(x - 15, y);
-        path.lineTo(x + 15, y);
-        path.close();
-
-        canvas.drawPath(path, warningPaint);
+        canvas.drawPath(tempPath, warningPaint);
 
         // Draw exclamation mark
-        Paint textPaint = new Paint();
-        textPaint.setColor(Color.BLACK);
-        textPaint.setTextSize(16f);
-        textPaint.setTextAlign(Paint.Align.CENTER);
-        textPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-
-        canvas.drawText("!", x, y + 15, textPaint);
+        canvas.drawText("!", x, y + 15, iconPaint);
     }
 
-    // 3D effects from depth detection
-    private void draw3DEffects(Canvas canvas, float left, float top, float right, float bottom) {
-        // Draw subtle depth lines
-        Paint effectPaint = new Paint();
-        effectPaint.setStyle(Paint.Style.STROKE);
-        effectPaint.setStrokeWidth(2f);
-        effectPaint.setColor(0x4400FF00); // Semi-transparent green
-        effectPaint.setAntiAlias(true);
-
-        // Corner depth indicators
+    private void draw3DEffectsOptimized(Canvas canvas, float left, float top, float right, float bottom) {
+        // Draw corner depth indicators efficiently
         float cornerSize = 20f;
 
         // Top-left corner
-        Path tlPath = new Path();
-        tlPath.moveTo(left, top + cornerSize);
-        tlPath.lineTo(left, top);
-        tlPath.lineTo(left + cornerSize, top);
-        canvas.drawPath(tlPath, effectPaint);
+        tempPath.reset();
+        tempPath.moveTo(left, top + cornerSize);
+        tempPath.lineTo(left, top);
+        tempPath.lineTo(left + cornerSize, top);
+        canvas.drawPath(tempPath, effectPaint);
 
         // Top-right corner
-        Path trPath = new Path();
-        trPath.moveTo(right - cornerSize, top);
-        trPath.lineTo(right, top);
-        trPath.lineTo(right, top + cornerSize);
-        canvas.drawPath(trPath, effectPaint);
+        tempPath.reset();
+        tempPath.moveTo(right - cornerSize, top);
+        tempPath.lineTo(right, top);
+        tempPath.lineTo(right, top + cornerSize);
+        canvas.drawPath(tempPath, effectPaint);
 
         // Bottom-left corner
-        Path blPath = new Path();
-        blPath.moveTo(left, bottom - cornerSize);
-        blPath.lineTo(left, bottom);
-        blPath.lineTo(left + cornerSize, bottom);
-        canvas.drawPath(blPath, effectPaint);
+        tempPath.reset();
+        tempPath.moveTo(left, bottom - cornerSize);
+        tempPath.lineTo(left, bottom);
+        tempPath.lineTo(left + cornerSize, bottom);
+        canvas.drawPath(tempPath, effectPaint);
 
         // Bottom-right corner
-        Path brPath = new Path();
-        brPath.moveTo(right - cornerSize, bottom);
-        brPath.lineTo(right, bottom);
-        brPath.lineTo(right, bottom - cornerSize);
-        canvas.drawPath(brPath, effectPaint);
+        tempPath.reset();
+        tempPath.moveTo(right - cornerSize, bottom);
+        tempPath.lineTo(right, bottom);
+        tempPath.lineTo(right, bottom - cornerSize);
+        canvas.drawPath(tempPath, effectPaint);
     }
 
-    // 3D badge from depth detection
-    private void draw3DBadge(Canvas canvas, float x, float y, String status, boolean is3D) {
-        // Badge background
-        badgePaint.setStyle(Paint.Style.FILL);
-        if (is3D) {
-            badgePaint.setColor(0xFF00AA00); // Green
-        } else if (status.contains("Partial")) {
-            badgePaint.setColor(0xFFFF9800); // Orange
-        } else {
-            badgePaint.setColor(0xFFFF4444); // Red
+    // ========== UTILITY METHODS ==========
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+
+        // Recalculate scale factors when view size changes
+        if (lastImageWidth > 0 && lastImageHeight > 0) {
+            updateScaleFactorsIfNeeded(lastImageWidth, lastImageHeight);
         }
 
-        // Draw circular badge
-        canvas.drawCircle(x, y + 15, 30, badgePaint);
+        // Clear cached gradient on size change
+        cachedGradient = null;
+    }
 
-        // Draw 3D icon
-        Paint iconPaint = new Paint();
-        iconPaint.setColor(Color.WHITE);
-        iconPaint.setTextSize(24f);
-        iconPaint.setTextAlign(Paint.Align.CENTER);
-        iconPaint.setAntiAlias(true);
-        iconPaint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-
-        canvas.drawText("3D", x, y + 22, iconPaint);
+    public void clearCache() {
+        synchronized (currentFaceDataList) {
+            currentFaceDataList.clear();
+        }
+        cachedGradient = null;
+        invalidate();
     }
 }

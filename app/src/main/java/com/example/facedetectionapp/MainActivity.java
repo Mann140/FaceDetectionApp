@@ -5,6 +5,8 @@ import android.content.pm.PackageManager;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -33,7 +35,7 @@ import com.google.mlkit.vision.face.FaceDetectorOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends AppCompatActivity {
     private PreviewView previewView;
@@ -43,44 +45,47 @@ public class MainActivity extends AppCompatActivity {
     private FaceDetector detector;
     private AntiSpoofingDetector antiSpoofingDetector;
 
-    // Cache management fields
-    private Handler cacheHandler = new Handler();
+    // Performance optimization fields
+    private Handler mainHandler;
+    private Handler backgroundHandler;
+    private HandlerThread backgroundThread;
+    private Handler cacheHandler;
     private Runnable cacheCheckRunnable;
-    private static final long CACHE_CHECK_INTERVAL = 1000; // Check every second
+
+    // Threading and performance controls
+    private final AtomicBoolean isProcessing = new AtomicBoolean(false);
+    private final AtomicBoolean shouldProcess = new AtomicBoolean(true);
+    private volatile long lastProcessTime = 0;
+    private volatile long lastUIUpdateTime = 0;
+
+    // Performance configuration
+    private static final long FRAME_PROCESSING_INTERVAL = 100; // Process every 100ms (10 FPS)
+    private static final long UI_UPDATE_INTERVAL = 50; // Update UI every 50ms (20 FPS)
+    private static final long CACHE_CHECK_INTERVAL = 1000; // Check cache every second
+
+    // Object pools for memory optimization
+    private final List<FaceData> reusableFaceDataList = new ArrayList<>();
+    private final Object faceDataLock = new Object();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        // Initialize handlers for threading
+        mainHandler = new Handler(Looper.getMainLooper());
+        backgroundThread = new HandlerThread("FaceProcessing", Thread.NORM_PRIORITY);
+        backgroundThread.start();
+        backgroundHandler = new Handler(backgroundThread.getLooper());
+        cacheHandler = new Handler();
+
         // Initialize views
-        previewView = findViewById(R.id.previewView);
-        faceCountText = findViewById(R.id.faceCountText);
-        spoofWarningText = findViewById(R.id.spoofWarningText);
+        initializeViews();
 
-        // Initialize anti-spoofing detector
-        antiSpoofingDetector = new AntiSpoofingDetector(this);
+        // Initialize detectors
+        initializeDetectors();
 
-        // Configure face detector
-        FaceDetectorOptions options = new FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE) // We don't need ML Kit classifications anymore
-                .enableTracking()
-                .build();
-
-        detector = FaceDetection.getClient(options);
-
-        // Replace placeholder view with custom overlay
-        View placeholder = findViewById(R.id.overlay);
-        ViewGroup parent = (ViewGroup) placeholder.getParent();
-        int index = parent.indexOfChild(placeholder);
-        parent.removeView(placeholder);
-
-        overlayView = new FaceOverlayView(this, null);
-        overlayView.setLayoutParams(placeholder.getLayoutParams());
-        parent.addView(overlayView, index);
-
-        // Start periodic cache checking
+        // Start performance monitoring
         startPeriodicCacheCheck();
 
         // Check camera permission
@@ -91,7 +96,44 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ========== CACHE MANAGEMENT METHODS ==========
+    private void initializeViews() {
+        previewView = findViewById(R.id.previewView);
+        faceCountText = findViewById(R.id.faceCountText);
+        spoofWarningText = findViewById(R.id.spoofWarningText);
+
+        // Replace placeholder view with custom overlay
+        View placeholder = findViewById(R.id.overlay);
+        ViewGroup parent = (ViewGroup) placeholder.getParent();
+        int index = parent.indexOfChild(placeholder);
+        parent.removeView(placeholder);
+
+        overlayView = new FaceOverlayView(this, null);
+        overlayView.setLayoutParams(placeholder.getLayoutParams());
+        parent.addView(overlayView, index);
+    }
+
+    private void initializeDetectors() {
+        // Initialize anti-spoofing detector on background thread
+        backgroundHandler.post(() -> {
+            antiSpoofingDetector = new AntiSpoofingDetector(this);
+
+            mainHandler.post(() -> {
+                faceCountText.setText("AI models loaded - Ready");
+            });
+        });
+
+        // Configure face detector with optimized settings
+        FaceDetectorOptions options = new FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+                .enableTracking()
+                .setMinFaceSize(0.1f) // Slightly larger minimum face size for better performance
+                .build();
+
+        detector = FaceDetection.getClient(options);
+    }
+
+    // ========== OPTIMIZED CACHE MANAGEMENT ==========
 
     private void startPeriodicCacheCheck() {
         cacheCheckRunnable = new Runnable() {
@@ -102,12 +144,13 @@ public class MainActivity extends AppCompatActivity {
                     antiSpoofingDetector.clearCacheIfStale();
                 }
 
-                // Schedule next check
-                cacheHandler.postDelayed(this, CACHE_CHECK_INTERVAL);
+                // Schedule next check only if activity is active
+                if (!isFinishing() && !isDestroyed()) {
+                    cacheHandler.postDelayed(this, CACHE_CHECK_INTERVAL);
+                }
             }
         };
 
-        // Start the periodic check
         cacheHandler.post(cacheCheckRunnable);
     }
 
@@ -118,41 +161,63 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // ========== LIFECYCLE METHODS ==========
+    // ========== OPTIMIZED LIFECYCLE METHODS ==========
 
     @Override
     protected void onPause() {
         super.onPause();
+        shouldProcess.set(false);
+
         // Clear cache when app is paused
         if (antiSpoofingDetector != null) {
-            antiSpoofingDetector.forceClearCache();
+            backgroundHandler.post(() -> antiSpoofingDetector.forceClearCache());
         }
+
+        // Update UI to show paused state
+        mainHandler.post(() -> faceCountText.setText("App paused - processing stopped"));
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        shouldProcess.set(true);
+
         // Restart periodic checking when app resumes
         if (cacheCheckRunnable == null) {
             startPeriodicCacheCheck();
         }
+
+        mainHandler.post(() -> faceCountText.setText("App resumed - processing active"));
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
 
-        // Stop periodic cache checking
+        // Stop all processing
+        shouldProcess.set(false);
         stopPeriodicCacheCheck();
 
-        // Clean up the anti-spoofing detector
-        if (antiSpoofingDetector != null) {
-            antiSpoofingDetector.forceClearCache(); // Force clear on destroy
-            antiSpoofingDetector.close();
+        // Clean up background thread
+        if (backgroundThread != null) {
+            backgroundThread.quitSafely();
+            try {
+                backgroundThread.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // Clean up the anti-spoofing detector on background thread
+        if (antiSpoofingDetector != null && backgroundHandler != null) {
+            backgroundHandler.post(() -> {
+                antiSpoofingDetector.forceClearCache();
+                antiSpoofingDetector.close();
+            });
         }
     }
 
-    // ========== CAMERA METHODS ==========
+    // ========== OPTIMIZED CAMERA METHODS ==========
 
     private boolean checkCameraPermission() {
         return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -165,7 +230,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startCamera() {
-        faceCountText.setText("Starting camera...");
+        mainHandler.post(() -> faceCountText.setText("Starting camera..."));
 
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
                 ProcessCameraProvider.getInstance(this);
@@ -174,44 +239,77 @@ public class MainActivity extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
 
-                // Preview
-                Preview preview = new Preview.Builder().build();
+                // Optimized preview configuration
+                Preview preview = new Preview.Builder()
+                        .setTargetRotation(getWindowManager().getDefaultDisplay().getRotation())
+                        .build();
 
                 // Front camera selector
                 CameraSelector cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
 
-                // Image analysis for face detection
+                // Optimized image analysis configuration
                 ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setTargetRotation(getWindowManager().getDefaultDisplay().getRotation())
                         .build();
 
-                imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor(),
-                        new ImageAnalysis.Analyzer() {
-                            @Override
-                            public void analyze(@NonNull ImageProxy image) {
-                                processImage(image);
-                            }
-                        });
+                // Set analyzer with optimized processing
+                imageAnalysis.setAnalyzer(backgroundHandler::post, this::processImageOptimized);
 
-                preview.setSurfaceProvider(previewView.getSurfaceProvider());
+                // Camera operations must be on main thread
+                mainHandler.post(() -> {
+                    try {
+                        preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-                // Unbind all use cases before rebinding
-                cameraProvider.unbindAll();
+                        // Unbind all use cases before rebinding
+                        cameraProvider.unbindAll();
 
-                // Bind use cases to camera
-                cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+                        // Bind use cases to camera
+                        cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+
+                        faceCountText.setText("Camera ready - AI processing active");
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Camera binding failed: " + e.getMessage(),
+                                Toast.LENGTH_SHORT).show();
+                        faceCountText.setText("Camera binding failed");
+                    }
+                });
 
             } catch (ExecutionException | InterruptedException e) {
-                Toast.makeText(this, "Camera failed: " + e.getMessage(),
-                        Toast.LENGTH_SHORT).show();
+                mainHandler.post(() -> {
+                    Toast.makeText(this, "Camera failed: " + e.getMessage(),
+                            Toast.LENGTH_SHORT).show();
+                    faceCountText.setText("Camera initialization failed");
+                });
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
-    // ========== IMAGE PROCESSING WITH CACHE MANAGEMENT ==========
+    // ========== OPTIMIZED IMAGE PROCESSING ==========
 
     @OptIn(markerClass = ExperimentalGetImage.class)
-    private void processImage(ImageProxy imageProxy) {
+    private void processImageOptimized(ImageProxy imageProxy) {
+        // Skip processing if app is not active or already processing
+        if (!shouldProcess.get() || isProcessing.get()) {
+            imageProxy.close(); // Close immediately if not processing
+            return;
+        }
+
+        // Throttle frame processing for performance
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastProcessTime < FRAME_PROCESSING_INTERVAL) {
+            imageProxy.close(); // Close immediately if throttling
+            return;
+        }
+
+        // Set processing flag
+        if (!isProcessing.compareAndSet(false, true)) {
+            imageProxy.close(); // Close immediately if couldn't set processing flag
+            return;
+        }
+
+        lastProcessTime = currentTime;
+
         if (imageProxy.getImage() != null) {
             InputImage image = InputImage.fromMediaImage(
                     imageProxy.getImage(),
@@ -219,90 +317,190 @@ public class MainActivity extends AppCompatActivity {
 
             detector.process(image)
                     .addOnSuccessListener(faces -> {
-                        // Check if any faces are detected
-                        if (faces.isEmpty()) {
-                            // No faces detected - clear the anti-spoofing cache
-                            if (antiSpoofingDetector != null) {
-                                antiSpoofingDetector.clearCache();
-                            }
-
-                            runOnUiThread(() -> {
-                                faceCountText.setText("No faces detected - cache cleared");
-                                spoofWarningText.setVisibility(View.GONE);
-
-                                // Clear the overlay
-                                overlayView.setFacesWithML(new ArrayList<>(),
-                                        imageProxy.getWidth(),
-                                        imageProxy.getHeight());
-                            });
-                        } else {
-                            // Faces detected - update detection time and process normally
-                            if (antiSpoofingDetector != null) {
-                                antiSpoofingDetector.updateLastDetectionTime();
-                            }
-
-                            // Create list of face data with TensorFlow Lite spoofing detection
-                            List<FaceData> faceDataList = new ArrayList<>();
-
-                            for (Face face : faces) {
-                                // Use TensorFlow Lite model for anti-spoofing detection
-                                FaceData faceData = antiSpoofingDetector.analyzeFace(imageProxy, face.getBoundingBox());
-                                faceDataList.add(faceData);
-                            }
-
-                            // Count real vs fake faces
-                            int realFaces = 0;
-                            int fakeFaces = 0;
-                            for (FaceData data : faceDataList) {
-                                if (data.isReal) realFaces++;
-                                else fakeFaces++;
-                            }
-
-                            final int finalRealFaces = realFaces;
-                            final int finalFakeFaces = fakeFaces;
-
-                            runOnUiThread(() -> {
-                                // Show face count and cache status
-                                String cacheStatus = antiSpoofingDetector != null ?
-                                        antiSpoofingDetector.getCacheStatus() : "";
-
-                                faceCountText.setText("Real: " + finalRealFaces +
-                                        " | Fake: " + finalFakeFaces +
-                                        " | " + cacheStatus);
-
-                                // Show warning if fake faces detected
-                                if (finalFakeFaces > 0) {
-                                    spoofWarningText.setVisibility(View.VISIBLE);
-                                    spoofWarningText.setText("⚠️ Spoofing detected by AI!");
-                                } else if (finalRealFaces > 0) {
-                                    spoofWarningText.setVisibility(View.VISIBLE);
-                                    spoofWarningText.setText("✓ Real faces detected by AI");
-                                } else {
-                                    spoofWarningText.setVisibility(View.GONE);
-                                }
-
-                                // Update overlay with face data
-                                overlayView.setFacesWithML(faceDataList,
-                                        imageProxy.getWidth(),
-                                        imageProxy.getHeight());
-                            });
+                        try {
+                            processFacesOptimized(faces, imageProxy, currentTime);
+                        } finally {
+                            // Close ImageProxy only after processing is complete
+                            imageProxy.close();
+                            isProcessing.set(false);
                         }
                     })
                     .addOnFailureListener(e -> {
-                        // On failure, also clear cache to prevent stale data
-                        if (antiSpoofingDetector != null) {
-                            antiSpoofingDetector.clearCache();
+                        try {
+                            handleProcessingFailure();
+                        } finally {
+                            // Close ImageProxy on failure too
+                            imageProxy.close();
+                            isProcessing.set(false);
                         }
-
-                        runOnUiThread(() -> {
-                            faceCountText.setText("Detection failed - cache cleared");
-                            spoofWarningText.setVisibility(View.GONE);
-                        });
-                    })
-                    .addOnCompleteListener(task -> imageProxy.close());
+                    });
         } else {
             imageProxy.close();
+            isProcessing.set(false);
         }
+    }
+
+    private void processFacesOptimized(List<Face> faces, ImageProxy imageProxy, long currentTime) {
+        if (!shouldProcess.get()) return;
+
+        if (faces.isEmpty()) {
+            // No faces detected - clear cache and update UI efficiently
+            if (antiSpoofingDetector != null) {
+                antiSpoofingDetector.clearCache();
+            }
+
+            updateUIOptimized("No faces detected - cache cleared", false, 0, 0, currentTime);
+            clearOverlayOptimized(imageProxy);
+        } else {
+            // Faces detected - process them efficiently
+            if (antiSpoofingDetector != null) {
+                antiSpoofingDetector.updateLastDetectionTime();
+
+                // Process faces immediately on background thread
+                processFacesImmediately(faces, imageProxy, currentTime);
+            }
+        }
+    }
+
+    private void processFacesImmediately(List<Face> faces, ImageProxy imageProxy, long currentTime) {
+        // Get or create reusable face data list
+        List<FaceData> faceDataList = getReusableFaceDataList(faces.size());
+
+        // Process all faces immediately to avoid ImageProxy being closed
+        for (int i = 0; i < faces.size(); i++) {
+            final int index = i;
+            final Face face = faces.get(i);
+
+            if (!shouldProcess.get()) return;
+
+            try {
+                FaceData faceData = antiSpoofingDetector.analyzeFace(imageProxy, face.getBoundingBox());
+
+                synchronized (faceDataLock) {
+                    if (index < faceDataList.size()) {
+                        faceDataList.set(index, faceData);
+                    }
+                }
+            } catch (Exception e) {
+                // Handle individual face processing errors gracefully
+                synchronized (faceDataLock) {
+                    if (index < faceDataList.size()) {
+                        faceDataList.set(index, new FaceData(face.getBoundingBox(), false, 50.0f, "ProcessingError", false));
+                    }
+                }
+            }
+        }
+
+        // Update UI after processing all faces
+        updateUIWithFaceData(faceDataList, imageProxy, currentTime);
+    }
+
+    private List<FaceData> getReusableFaceDataList(int size) {
+        synchronized (faceDataLock) {
+            reusableFaceDataList.clear();
+            for (int i = 0; i < size; i++) {
+                reusableFaceDataList.add(null);
+            }
+            return reusableFaceDataList;
+        }
+    }
+
+    private void updateUIWithFaceData(List<FaceData> faceDataList, ImageProxy imageProxy, long currentTime) {
+        // Count real vs fake faces efficiently
+        int realFaces = 0, fakeFaces = 0;
+
+        synchronized (faceDataLock) {
+            for (FaceData data : faceDataList) {
+                if (data != null) {
+                    if (data.isReal) realFaces++;
+                    else fakeFaces++;
+                }
+            }
+        }
+
+        // Update UI on main thread with throttling
+        updateUIOptimized(null, true, realFaces, fakeFaces, currentTime);
+
+        // Update overlay efficiently
+        updateOverlayOptimized(faceDataList, imageProxy, currentTime);
+    }
+
+    private void updateUIOptimized(String message, boolean hasFaces, int realFaces, int fakeFaces, long currentTime) {
+        // Throttle UI updates for better performance
+        if (currentTime - lastUIUpdateTime < UI_UPDATE_INTERVAL) {
+            return;
+        }
+
+        lastUIUpdateTime = currentTime;
+
+        mainHandler.post(() -> {
+            if (!shouldProcess.get()) return;
+
+            if (message != null) {
+                faceCountText.setText(message);
+                spoofWarningText.setVisibility(View.GONE);
+            } else if (hasFaces) {
+                // Show face count and cache status efficiently
+                String cacheStatus = antiSpoofingDetector != null ?
+                        antiSpoofingDetector.getCacheStatus() : "";
+
+                faceCountText.setText(String.format("Real: %d | Fake: %d | %s",
+                        realFaces, fakeFaces, cacheStatus));
+
+                // Update warning text efficiently
+                if (fakeFaces > 0) {
+                    spoofWarningText.setVisibility(View.VISIBLE);
+                    spoofWarningText.setText("⚠️ Spoofing detected by AI!");
+                } else if (realFaces > 0) {
+                    spoofWarningText.setVisibility(View.VISIBLE);
+                    spoofWarningText.setText("✓ Real faces detected by AI");
+                } else {
+                    spoofWarningText.setVisibility(View.GONE);
+                }
+            }
+        });
+    }
+
+    private void updateOverlayOptimized(List<FaceData> faceDataList, ImageProxy imageProxy, long currentTime) {
+        // Update overlay on main thread with efficient copying
+        mainHandler.post(() -> {
+            if (!shouldProcess.get() || overlayView == null) return;
+
+            List<FaceData> copyList = new ArrayList<>();
+            synchronized (faceDataLock) {
+                for (FaceData data : faceDataList) {
+                    if (data != null) {
+                        copyList.add(data);
+                    }
+                }
+            }
+
+            overlayView.setFacesWithMLOptimized(copyList,
+                    imageProxy.getWidth(),
+                    imageProxy.getHeight());
+        });
+    }
+
+    private void clearOverlayOptimized(ImageProxy imageProxy) {
+        mainHandler.post(() -> {
+            if (overlayView != null) {
+                overlayView.setFacesWithMLOptimized(new ArrayList<>(),
+                        imageProxy.getWidth(),
+                        imageProxy.getHeight());
+            }
+        });
+    }
+
+    private void handleProcessingFailure() {
+        // Clear cache and update UI on failure
+        if (antiSpoofingDetector != null) {
+            backgroundHandler.post(() -> antiSpoofingDetector.clearCache());
+        }
+
+        mainHandler.post(() -> {
+            faceCountText.setText("Detection failed - cache cleared");
+            spoofWarningText.setVisibility(View.GONE);
+        });
     }
 
     // ========== PERMISSION HANDLING ==========
@@ -319,13 +517,13 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 Toast.makeText(this, "Camera permission denied",
                         Toast.LENGTH_SHORT).show();
+                faceCountText.setText("Camera permission required");
             }
         }
     }
 
     // ========== DATA CLASS ==========
 
-    // Data class to hold face info with authenticity
     public static class FaceData {
         public Rect boundingBox;
         public boolean isReal;
@@ -336,7 +534,7 @@ public class MainActivity extends AppCompatActivity {
         public FaceData(Rect boundingBox, boolean isReal) {
             this.boundingBox = boundingBox;
             this.isReal = isReal;
-            this.confidence = 75.0f; // Default confidence
+            this.confidence = 75.0f;
             this.detectionMethod = "ML";
             this.has3DStructure = false;
         }
