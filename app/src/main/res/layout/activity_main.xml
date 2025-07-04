@@ -13,6 +13,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Top Status Panel -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -24,33 +25,173 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Initializing..."
-            android:textSize="20sp"
+            android:textSize="18sp"
             android:textColor="@android:color/white"
             android:background="#80000000"
-            android:padding="10dp" />
+            android:padding="10dp"
+            android:layout_marginBottom="4dp" />
 
         <TextView
             android:id="@+id/spoofWarningText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text=""
-            android:textSize="18sp"
+            android:textSize="16sp"
             android:textColor="@android:color/white"
             android:background="#80FF0000"
-            android:padding="10dp"
-            android:layout_marginTop="8dp"
+            android:padding="8dp"
+            android:layout_marginBottom="4dp"
             android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/recognitionInfoText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Database: 0 people, 0 embeddings"
+            android:textSize="14sp"
+            android:textColor="@android:color/white"
+            android:background="#802196F3"
+            android:padding="8dp"
+            android:layout_marginBottom="4dp" />
 
         <TextView
             android:id="@+id/analysisInfoText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="ML+Texture Analysis"
-            android:textSize="14sp"
+            android:text="ML+FaceNet+Anti-Spoofing Analysis"
+            android:textSize="12sp"
             android:textColor="@android:color/white"
-            android:background="#802196F3"
-            android:padding="8dp"
-            android:layout_marginTop="8dp" />
+            android:background="#804CAF50"
+            android:padding="6dp" />
+
+    </LinearLayout>
+
+    <!-- Bottom Control Panel -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:background="@drawable/control_panel_background">
+
+        <!-- Recognition Controls Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="8dp">
+
+            <Button
+                android:id="@+id/addPersonButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Add Person"
+                android:textSize="14sp"
+                android:textColor="@android:color/white"
+                android:background="@drawable/button_add_person"
+                android:layout_marginEnd="8dp"
+                android:padding="12dp"
+                android:enabled="false" />
+
+            <Button
+                android:id="@+id/manageDatabaseButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Manage DB"
+                android:textSize="14sp"
+                android:textColor="@android:color/white"
+                android:background="@drawable/button_manage_db"
+                android:layout_marginStart="8dp"
+                android:padding="12dp"
+                android:enabled="false" />
+
+        </LinearLayout>
+
+        <!-- Status Indicators Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center">
+
+            <!-- Anti-Spoofing Indicator -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginEnd="16dp"
+                android:background="#80424242"
+                android:padding="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🛡️"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Anti-Spoof"
+                    android:textSize="12sp"
+                    android:textColor="@android:color/white"
+                    android:layout_marginStart="4dp" />
+
+            </LinearLayout>
+
+            <!-- Face Recognition Indicator -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginEnd="16dp"
+                android:background="#80424242"
+                android:padding="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="👤"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="FaceNet ID"
+                    android:textSize="12sp"
+                    android:textColor="@android:color/white"
+                    android:layout_marginStart="4dp" />
+
+            </LinearLayout>
+
+            <!-- Performance Indicator -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="#80424242"
+                android:padding="6dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="⚡"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Real-time"
+                    android:textSize="12sp"
+                    android:textColor="@android:color/white"
+                    android:layout_marginStart="4dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
 
     </LinearLayout>
 
