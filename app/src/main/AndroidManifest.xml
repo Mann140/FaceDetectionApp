@@ -26,7 +26,6 @@
         android:theme="@style/Theme.FaceDetectionApp"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
-        android:extractNativeLibs="false"
         android:usesCleartextTraffic="false"
         tools:targetApi="31">
 
