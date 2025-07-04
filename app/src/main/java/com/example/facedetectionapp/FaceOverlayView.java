@@ -46,11 +46,7 @@ public class FaceOverlayView extends View {
     private final Paint iconPaint;
     private final Paint effectPaint;
     private final Paint mlPaint;
-
-    // New paints for face recognition
-    private final Paint recognitionPaint;
-    private final Paint recognitionBgPaint;
-    private final Paint unknownPaint;
+    private final Paint identityPaint; // New for identity display
 
     // Pre-allocated objects for drawing efficiency
     private final RectF tempRectF = new RectF();
@@ -80,11 +76,7 @@ public class FaceOverlayView extends View {
         iconPaint = createIconPaint();
         effectPaint = createEffectPaint();
         mlPaint = createMLPaint();
-
-        // Initialize recognition paints
-        recognitionPaint = createRecognitionPaint();
-        recognitionBgPaint = createRecognitionBackgroundPaint();
-        unknownPaint = createUnknownPaint();
+        identityPaint = createIdentityPaint(); // New paint for identity text
     }
 
     // ========== PAINT FACTORY METHODS ==========
@@ -193,32 +185,14 @@ public class FaceOverlayView extends View {
         return paint;
     }
 
-    // New recognition paint methods
-    private Paint createRecognitionPaint() {
+    private Paint createIdentityPaint() {
         Paint paint = new Paint();
-        paint.setColor(Color.WHITE);
+        paint.setColor(0xFF00FFFF); // Cyan color for identity
         paint.setTextSize(24f);
         paint.setAntiAlias(true);
         paint.setTextAlign(Paint.Align.CENTER);
         paint.setShadowLayer(3f, 1f, 1f, Color.BLACK);
         paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        return paint;
-    }
-
-    private Paint createRecognitionBackgroundPaint() {
-        Paint paint = new Paint();
-        paint.setAntiAlias(true);
-        paint.setStyle(Paint.Style.FILL);
-        return paint;
-    }
-
-    private Paint createUnknownPaint() {
-        Paint paint = new Paint();
-        paint.setColor(0xFFFFFF66); // Light yellow
-        paint.setTextSize(22f);
-        paint.setAntiAlias(true);
-        paint.setTextAlign(Paint.Align.CENTER);
-        paint.setShadowLayer(3f, 1f, 1f, Color.BLACK);
         return paint;
     }
 
@@ -272,7 +246,7 @@ public class FaceOverlayView extends View {
                 return true;
             }
 
-            // Quick comparison of face data (including recognition data)
+            // Quick comparison of face data
             if (newFaceData != null) {
                 for (int i = 0; i < newFaceData.size() && i < currentFaceDataList.size(); i++) {
                     if (hasFaceDataChanged(currentFaceDataList.get(i), newFaceData.get(i))) {
@@ -292,8 +266,13 @@ public class FaceOverlayView extends View {
                 Math.abs(oldData.confidence - newData.confidence) > 1.0f ||
                 !oldData.boundingBox.equals(newData.boundingBox) ||
                 !oldData.detectionMethod.equals(newData.detectionMethod) ||
-                !oldData.recognizedName.equals(newData.recognizedName) ||
-                Math.abs(oldData.recognitionConfidence - newData.recognitionConfidence) > 1.0f;
+                !areIdentitiesEqual(oldData.identity, newData.identity);
+    }
+
+    private boolean areIdentitiesEqual(String identity1, String identity2) {
+        if (identity1 == null && identity2 == null) return true;
+        if (identity1 == null || identity2 == null) return false;
+        return identity1.equals(identity2);
     }
 
     private void updateScaleFactorsIfNeeded(int imageWidth, int imageHeight) {
@@ -341,7 +320,7 @@ public class FaceOverlayView extends View {
         }
     }
 
-    // ========== OPTIMIZED DRAWING WITH RECOGNITION ==========
+    // ========== OPTIMIZED DRAWING ==========
 
     @Override
     protected void onDraw(Canvas canvas) {
@@ -353,15 +332,15 @@ public class FaceOverlayView extends View {
             faceDataCopy.addAll(currentFaceDataList);
         }
 
-        // Draw faces efficiently with recognition info
+        // Draw faces efficiently
         for (MainActivity.FaceData faceData : faceDataCopy) {
-            drawFaceWithRecognition(canvas, faceData);
+            drawFaceOptimized(canvas, faceData);
         }
 
         needsRedraw = false;
     }
 
-    private void drawFaceWithRecognition(Canvas canvas, MainActivity.FaceData faceData) {
+    private void drawFaceOptimized(Canvas canvas, MainActivity.FaceData faceData) {
         Rect face = faceData.boundingBox;
 
         // Transform coordinates efficiently
@@ -372,7 +351,7 @@ public class FaceOverlayView extends View {
 
         // Draw based on detection result
         if (faceData.isReal) {
-            drawRealFaceWithRecognition(canvas, left, top, right, bottom, faceData);
+            drawRealFaceOptimized(canvas, left, top, right, bottom, faceData);
         } else {
             drawFakeFaceOptimized(canvas, left, top, right, bottom, faceData);
         }
@@ -380,40 +359,38 @@ public class FaceOverlayView extends View {
         // Draw additional elements
         drawConfidenceMeterOptimized(canvas, right + 10, top, faceData.confidence);
 
-        // Draw detection method (smaller text to make room for recognition)
-        methodPaint.setTextSize(16f);
-        canvas.drawText(faceData.detectionMethod, (left + right) / 2, top - 5, methodPaint);
+        // Draw detection method
+        canvas.drawText(faceData.detectionMethod, (left + right) / 2, top - 10, methodPaint);
     }
 
-    private void drawRealFaceWithRecognition(Canvas canvas, float left, float top, float right, float bottom,
-                                             MainActivity.FaceData faceData) {
-
-        // Choose border color based on recognition status
-        int borderColor;
-        if (faceData.recognizedName != null && !faceData.recognizedName.equals("Unknown")) {
-            // Known person - green gradient
-            borderColor = Color.GREEN;
-        } else {
-            // Unknown person - blue gradient
-            borderColor = 0xFF4CAF50; // Light green
-        }
+    private void drawRealFaceOptimized(Canvas canvas, float left, float top, float right, float bottom,
+                                       MainActivity.FaceData faceData) {
 
         // Use cached gradient or create new one
-        LinearGradient gradient = getCachedGradientForRecognition(left, top, right, bottom,
-                faceData.confidence, borderColor);
+        LinearGradient gradient = getCachedGradient(left, top, right, bottom, faceData.confidence);
         realFacePaint.setShader(gradient);
 
         // Draw main frame efficiently
         tempRectF.set(left, top, right, bottom);
         canvas.drawRoundRect(tempRectF, 20f, 20f, realFacePaint);
 
-        // Draw anti-spoofing label (smaller)
-        String antispoofLabel = String.format("REAL %.0f%%", faceData.confidence);
-        textPaint.setTextSize(22f);
-        canvas.drawText(antispoofLabel, (left + right) / 2, bottom + 25, textPaint);
+        // Draw "REAL" label with confidence
+        String label = String.format("REAL %.0f%%", faceData.confidence);
+        canvas.drawText(label, (left + right) / 2, bottom + 30, textPaint);
 
-        // Draw recognition information
-        drawRecognitionInfo(canvas, left, top, right, bottom + 45, faceData);
+        // Draw identity if available
+        if (faceData.identity != null && !faceData.identity.isEmpty()) {
+            String identityLabel = faceData.identity.equals("UNKNOWN") ? "Unknown Person" : faceData.identity;
+            // Use identity paint for better visibility
+            canvas.drawText(identityLabel, (left + right) / 2, bottom + 60, identityPaint);
+
+            // Add a small background for better readability
+            float textWidth = identityPaint.measureText(identityLabel);
+            tempRectF.set((left + right) / 2 - textWidth / 2 - 10, bottom + 40,
+                    (left + right) / 2 + textWidth / 2 + 10, bottom + 75);
+            canvas.drawRoundRect(tempRectF, 5f, 5f, bgPaint);
+            canvas.drawText(identityLabel, (left + right) / 2, bottom + 60, identityPaint);
+        }
 
         // Draw ML indicator
         drawMLIndicatorOptimized(canvas, left - 10, top - 10, true);
@@ -421,54 +398,6 @@ public class FaceOverlayView extends View {
         // Draw 3D effects if has depth info
         if (faceData.has3DStructure) {
             draw3DEffectsOptimized(canvas, left, top, right, bottom);
-        }
-    }
-
-    private void drawRecognitionInfo(Canvas canvas, float left, float top, float right, float baseY,
-                                     MainActivity.FaceData faceData) {
-
-        if (faceData.recognizedName == null) return;
-
-        float centerX = (left + right) / 2;
-        float currentY = baseY;
-
-        if (!faceData.recognizedName.equals("Unknown")) {
-            // Draw recognized person's name with background
-            String personName = faceData.recognizedName;
-
-            // Draw background for name
-            recognitionBgPaint.setColor(0xCC2E7D32); // Semi-transparent green
-            float textWidth = recognitionPaint.measureText(personName);
-            tempRectF.set(centerX - textWidth/2 - 10, currentY - 25,
-                    centerX + textWidth/2 + 10, currentY + 5);
-            canvas.drawRoundRect(tempRectF, 8f, 8f, recognitionBgPaint);
-
-            // Draw person name
-            recognitionPaint.setColor(Color.WHITE);
-            canvas.drawText(personName, centerX, currentY - 5, recognitionPaint);
-
-            // Draw recognition confidence
-            if (faceData.recognitionConfidence > 0) {
-                String confidenceText = String.format("%.0f%% match", faceData.recognitionConfidence);
-                recognitionPaint.setTextSize(18f);
-                recognitionPaint.setColor(0xFFE8F5E8); // Light green
-                canvas.drawText(confidenceText, centerX, currentY + 20, recognitionPaint);
-                recognitionPaint.setTextSize(24f); // Reset size
-            }
-
-        } else {
-            // Draw "Unknown" with different styling
-            String unknownText = "Unknown Person";
-
-            // Draw background for unknown
-            recognitionBgPaint.setColor(0xCCFF9800); // Semi-transparent orange
-            float textWidth = unknownPaint.measureText(unknownText);
-            tempRectF.set(centerX - textWidth/2 - 8, currentY - 23,
-                    centerX + textWidth/2 + 8, currentY + 3);
-            canvas.drawRoundRect(tempRectF, 6f, 6f, recognitionBgPaint);
-
-            // Draw unknown text
-            canvas.drawText(unknownText, centerX, currentY - 3, unknownPaint);
         }
     }
 
@@ -481,21 +410,22 @@ public class FaceOverlayView extends View {
 
         // Draw "FAKE" label
         String label = String.format("FAKE %.0f%%", 100 - faceData.confidence);
-        canvas.drawText(label, (left + right) / 2, bottom + 25, textPaint);
+        canvas.drawText(label, (left + right) / 2, bottom + 30, textPaint);
 
-        // Draw "Spoof Detected" for fake faces
-        String spoofText = "SPOOF DETECTED";
-        recognitionBgPaint.setColor(0xCCF44336); // Semi-transparent red
-        float textWidth = recognitionPaint.measureText(spoofText);
-        float centerX = (left + right) / 2;
-        float currentY = bottom + 50;
+        // Draw identity if available (even for fake faces, show what the recognition thought)
+        if (faceData.identity != null && !faceData.identity.isEmpty()) {
+            String identityLabel = "Attempted: " + (faceData.identity.equals("UNKNOWN") ? "Unknown" : faceData.identity);
+            // Use a different color for fake identity attempts
+            Paint fakeIdentityPaint = new Paint(identityPaint);
+            fakeIdentityPaint.setColor(0xFFFF6666); // Light red for fake attempts
 
-        tempRectF.set(centerX - textWidth/2 - 10, currentY - 25,
-                centerX + textWidth/2 + 10, currentY + 5);
-        canvas.drawRoundRect(tempRectF, 8f, 8f, recognitionBgPaint);
-
-        recognitionPaint.setColor(Color.WHITE);
-        canvas.drawText(spoofText, centerX, currentY - 5, recognitionPaint);
+            // Add background for readability
+            float textWidth = fakeIdentityPaint.measureText(identityLabel);
+            tempRectF.set((left + right) / 2 - textWidth / 2 - 10, bottom + 40,
+                    (left + right) / 2 + textWidth / 2 + 10, bottom + 75);
+            canvas.drawRoundRect(tempRectF, 5f, 5f, bgPaint);
+            canvas.drawText(identityLabel, (left + right) / 2, bottom + 60, fakeIdentityPaint);
+        }
 
         // Draw warning icon
         drawWarningIconOptimized(canvas, right - 30, top + 10);
@@ -504,8 +434,7 @@ public class FaceOverlayView extends View {
         drawMLIndicatorOptimized(canvas, left - 10, top - 10, false);
     }
 
-    private LinearGradient getCachedGradientForRecognition(float left, float top, float right, float bottom,
-                                                           float confidence, int baseColor) {
+    private LinearGradient getCachedGradient(float left, float top, float right, float bottom, float confidence) {
         // Check if we can reuse the cached gradient
         if (cachedGradient != null &&
                 Math.abs(lastGradientLeft - left) < 1f &&
@@ -515,12 +444,9 @@ public class FaceOverlayView extends View {
             return cachedGradient;
         }
 
-        // Create new gradient based on recognition status
-        int startColor = baseColor;
-        int endColor = Color.argb(255,
-                Color.red(baseColor),
-                (int)(Color.green(baseColor) * confidence / 100f),
-                Color.blue(baseColor));
+        // Create new gradient and cache it
+        int startColor = Color.GREEN;
+        int endColor = Color.argb(255, 0, (int)(255 * confidence / 100f), 0);
 
         cachedGradient = new LinearGradient(
                 left, top, right, bottom,
@@ -535,10 +461,6 @@ public class FaceOverlayView extends View {
         lastGradientBottom = bottom;
 
         return cachedGradient;
-    }
-
-    private LinearGradient getCachedGradient(float left, float top, float right, float bottom, float confidence) {
-        return getCachedGradientForRecognition(left, top, right, bottom, confidence, Color.GREEN);
     }
 
     private void drawConfidenceMeterOptimized(Canvas canvas, float x, float y, float confidence) {

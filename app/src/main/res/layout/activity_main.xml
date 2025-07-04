@@ -1,13 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
 
+    <!-- Camera Preview View -->
     <androidx.camera.view.PreviewView
         android:id="@+id/previewView"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Face Detection Overlay Placeholder (replaced programmatically) -->
     <View
         android:id="@+id/overlay"
         android:layout_width="match_parent"
@@ -18,8 +22,10 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="16dp"
+        android:layout_gravity="top">
 
+        <!-- Main Status Text -->
         <TextView
             android:id="@+id/faceCountText"
             android:layout_width="wrap_content"
@@ -28,9 +34,12 @@
             android:textSize="18sp"
             android:textColor="@android:color/white"
             android:background="#80000000"
-            android:padding="10dp"
-            android:layout_marginBottom="4dp" />
+            android:padding="12dp"
+            android:layout_marginBottom="8dp"
+            android:minHeight="48dp"
+            android:gravity="center_vertical" />
 
+        <!-- Spoofing Warning Text -->
         <TextView
             android:id="@+id/spoofWarningText"
             android:layout_width="wrap_content"
@@ -39,30 +48,25 @@
             android:textSize="16sp"
             android:textColor="@android:color/white"
             android:background="#80FF0000"
-            android:padding="8dp"
-            android:layout_marginBottom="4dp"
-            android:visibility="gone" />
+            android:padding="10dp"
+            android:layout_marginBottom="8dp"
+            android:visibility="gone"
+            android:minHeight="40dp"
+            android:gravity="center_vertical" />
 
-        <TextView
-            android:id="@+id/recognitionInfoText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Database: 0 people, 0 embeddings"
-            android:textSize="14sp"
-            android:textColor="@android:color/white"
-            android:background="#802196F3"
-            android:padding="8dp"
-            android:layout_marginBottom="4dp" />
-
+        <!-- Analysis Info Text -->
         <TextView
             android:id="@+id/analysisInfoText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="ML+FaceNet+Anti-Spoofing Analysis"
-            android:textSize="12sp"
+            android:text="ML Anti-Spoofing + Face Recognition"
+            android:textSize="14sp"
             android:textColor="@android:color/white"
-            android:background="#804CAF50"
-            android:padding="6dp" />
+            android:background="#802196F3"
+            android:padding="8dp"
+            android:layout_marginBottom="8dp"
+            android:minHeight="32dp"
+            android:gravity="center_vertical" />
 
     </LinearLayout>
 
@@ -70,129 +74,237 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
         android:orientation="vertical"
         android:padding="16dp"
-        android:background="@drawable/control_panel_background">
+        android:layout_gravity="bottom"
+        android:background="#CC000000">
 
-        <!-- Recognition Controls Row -->
+        <!-- Face Recognition Status -->
+        <TextView
+            android:id="@+id/recognitionStatusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Face Recognition: Disabled"
+            android:textSize="16sp"
+            android:textColor="@android:color/white"
+            android:background="#80333333"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp"
+            android:gravity="center"
+            android:minHeight="48dp" />
+
+        <!-- Control Buttons Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:gravity="center"
             android:layout_marginBottom="8dp">
 
+            <!-- Setup Recognition Button -->
             <Button
-                android:id="@+id/addPersonButton"
+                android:id="@+id/setupRecognitionButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Add Person"
+                android:text="Setup Face Recognition"
                 android:textSize="14sp"
+                android:background="#FF2196F3"
                 android:textColor="@android:color/white"
-                android:background="@drawable/button_add_person"
+                android:padding="12dp"
                 android:layout_marginEnd="8dp"
-                android:padding="12dp"
-                android:enabled="false" />
+                android:minHeight="48dp" />
 
+            <!-- Camera Switch Button -->
             <Button
-                android:id="@+id/manageDatabaseButton"
+                android:id="@+id/cameraSwitchButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Manage DB"
-                android:textSize="14sp"
+                android:layout_weight="0.7"
+                android:text="Switch Camera"
+                android:textSize="12sp"
+                android:background="#FF666666"
                 android:textColor="@android:color/white"
-                android:background="@drawable/button_manage_db"
-                android:layout_marginStart="8dp"
-                android:padding="12dp"
-                android:enabled="false" />
+                android:padding="8dp"
+                android:minHeight="48dp" />
 
         </LinearLayout>
 
-        <!-- Status Indicators Row -->
+        <!-- Statistics Panel -->
         <LinearLayout
+            android:id="@+id/statisticsPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center">
+            android:background="#80000000"
+            android:padding="8dp"
+            android:visibility="gone">
 
-            <!-- Anti-Spoofing Indicator -->
+            <!-- Real Faces Count -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginEnd="16dp"
-                android:background="#80424242"
-                android:padding="6dp">
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/realFacesCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textSize="20sp"
+                    android:textColor="#FF00FF00"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🛡️"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Anti-Spoof"
+                    android:text="Real"
                     android:textSize="12sp"
-                    android:textColor="@android:color/white"
-                    android:layout_marginStart="4dp" />
+                    android:textColor="@android:color/white" />
 
             </LinearLayout>
 
-            <!-- Face Recognition Indicator -->
+            <!-- Fake Faces Count -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginEnd="16dp"
-                android:background="#80424242"
-                android:padding="6dp">
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/fakeFacesCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textSize="20sp"
+                    android:textColor="#FFFF0000"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="👤"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="FaceNet ID"
+                    android:text="Fake"
                     android:textSize="12sp"
-                    android:textColor="@android:color/white"
-                    android:layout_marginStart="4dp" />
+                    android:textColor="@android:color/white" />
 
             </LinearLayout>
 
-            <!-- Performance Indicator -->
+            <!-- Recognized Faces Count -->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:background="#80424242"
-                android:padding="6dp">
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/recognizedFacesCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textSize="20sp"
+                    android:textColor="#FF00FFFF"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="⚡"
-                    android:textSize="16sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Real-time"
+                    android:text="Recognized"
                     android:textSize="12sp"
-                    android:textColor="@android:color/white"
-                    android:layout_marginStart="4dp" />
+                    android:textColor="@android:color/white" />
 
             </LinearLayout>
 
         </LinearLayout>
 
     </LinearLayout>
+
+    <!-- Performance Indicator (Top Right Corner) -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp">
+
+        <!-- FPS Counter -->
+        <TextView
+            android:id="@+id/fpsCounter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="FPS: --"
+            android:textSize="12sp"
+            android:textColor="@android:color/white"
+            android:background="#80000000"
+            android:padding="4dp"
+            android:visibility="gone" />
+
+        <!-- Cache Status -->
+        <TextView
+            android:id="@+id/cacheStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Cache: OK"
+            android:textSize="10sp"
+            android:textColor="@android:color/white"
+            android:background="#80000000"
+            android:padding="4dp"
+            android:layout_marginTop="4dp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- Loading Overlay for Face Recognition Setup -->
+    <FrameLayout
+        android:id="@+id/loadingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#80000000"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_gravity="center"
+            android:background="#DD000000"
+            android:padding="32dp">
+
+            <ProgressBar
+                android:id="@+id/loadingProgress"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:layout_gravity="center"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:id="@+id/loadingText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Initializing Face Recognition..."
+                android:textSize="16sp"
+                android:textColor="@android:color/white"
+                android:gravity="center"
+                android:layout_gravity="center" />
+
+            <TextView
+                android:id="@+id/loadingSubtext"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Please wait while we process your images"
+                android:textSize="12sp"
+                android:textColor="#CCFFFFFF"
+                android:gravity="center"
+                android:layout_gravity="center"
+                android:layout_marginTop="8dp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
 
 </FrameLayout>
