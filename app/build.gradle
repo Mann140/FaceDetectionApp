@@ -73,6 +73,10 @@ android {
                 'META-INF/ASL2.0',
                 'META-INF/*.kotlin_module'
         ]
+
+        // Handle duplicate native libraries (if any remain)
+        pickFirst "**/libtensorflowlite_jni.so"
+        pickFirst "**/libc++_shared.so"
     }
 
     // Optimize .tflite files
@@ -135,14 +139,16 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation 'com.google.mlkit:face-detection:16.1.5'
 
+    // Use ONLY LiteRT libraries (Google's new branding for TensorFlow Lite)
     implementation 'com.google.ai.edge.litert:litert:1.0.1'
-    implementation 'com.google.ai.edge.litert:litert-support-api:1.0.1'
+    implementation 'com.google.ai.edge.litert:litert-support-api:1.3.0'  // Fixed version
+    implementation 'com.google.ai.edge.litert:litert-gpu:1.3.0'  // Added GPU support for LiteRT
 
-    // Add TensorFlow Lite dependencies for embeddings
-    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
-    implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
-    implementation 'org.tensorflow:tensorflow-lite-gpu-api:2.14.0'
-    implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
+    // REMOVED: Old TensorFlow Lite dependencies to avoid conflicts
+    // implementation 'org.tensorflow:tensorflow-lite:2.14.0'
+    // implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
+    // implementation 'org.tensorflow:tensorflow-lite-gpu-api:2.14.0'
+    // implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
 
     // Add DocumentFile and ExifInterface for image handling
     implementation 'androidx.documentfile:documentfile:1.0.1'

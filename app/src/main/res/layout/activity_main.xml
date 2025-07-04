@@ -114,20 +114,6 @@
                 android:padding="12dp"
                 android:layout_marginEnd="8dp"
                 android:minHeight="48dp" />
-
-            <!-- Camera Switch Button -->
-            <Button
-                android:id="@+id/cameraSwitchButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="0.7"
-                android:text="Switch Camera"
-                android:textSize="12sp"
-                android:background="#FF666666"
-                android:textColor="@android:color/white"
-                android:padding="8dp"
-                android:minHeight="48dp" />
-
         </LinearLayout>
 
         <!-- Statistics Panel -->

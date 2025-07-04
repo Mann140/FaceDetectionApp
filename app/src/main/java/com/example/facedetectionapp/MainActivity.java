@@ -134,13 +134,6 @@ public class MainActivity extends AppCompatActivity {
 
         // Set up button click listener
         setupRecognitionButton.setOnClickListener(v -> setupFaceRecognition());
-
-        // Initialize camera switch button if it exists
-        Button cameraSwitchButton = findViewById(R.id.cameraSwitchButton);
-        if (cameraSwitchButton != null) {
-            cameraSwitchButton.setOnClickListener(v -> switchCamera());
-        }
-
         // Replace placeholder view with custom overlay
         View placeholder = findViewById(R.id.overlay);
         ViewGroup parent = (ViewGroup) placeholder.getParent();
