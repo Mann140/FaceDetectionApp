@@ -95,14 +95,9 @@ android {
         }
     }
 
-    // OPTIONAL: Add C++ support (comment out if using Pure Java version)
-    // Remove this block entirely if you delete the /cpp folder
-    externalNativeBuild {
-        cmake {
-            path file('src/main/cpp/CMakeLists.txt')
-            version '3.22.1'
-        }
-    }
+    // REMOVED: CMake configuration since this project uses pure Java/Kotlin
+    // No longer trying to build C++ native code
+
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         noCompress 'tflite'
