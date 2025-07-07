@@ -183,7 +183,8 @@ public class MainActivity extends AppCompatActivity {
                 Log.d(TAG, "🔧 Initializing Embedding Comparison System...");
 
                 try {
-                    embeddingIntegration = new EmbeddingIntegration();
+                    // FIX: Pass the Context parameter to EmbeddingIntegration constructor
+                    embeddingIntegration = new EmbeddingIntegration(MainActivity.this);
 
                     // Run comprehensive test
                     EmbeddingTestDemo.runComprehensiveTest();

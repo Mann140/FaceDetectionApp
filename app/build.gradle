@@ -60,30 +60,18 @@ android {
     }
 
     buildToolsVersion '35.0.0'
+    packagingOptions {
+        jniLibs {
+            pickFirsts += ['**/libtensorflowlite_jni.so', '**/libc++_shared.so']
+        }
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE', 'META-INF/NOTICE.txt', 'META-INF/ASL2.0', 'META-INF/*.kotlin_module']
+        }
+    }
 
     // Performance optimizations for packaging
-    packagingOptions {
-        // Exclude unnecessary files
-        excludes += [
-                'META-INF/DEPENDENCIES',
-                'META-INF/LICENSE',
-                'META-INF/LICENSE.txt',
-                'META-INF/NOTICE',
-                'META-INF/NOTICE.txt',
-                'META-INF/ASL2.0',
-                'META-INF/*.kotlin_module'
-        ]
-
-        // Handle duplicate native libraries (if any remain)
-        pickFirst "**/libtensorflowlite_jni.so"
-        pickFirst "**/libc++_shared.so"
-    }
 
     // Optimize .tflite files
-    aaptOptions {
-        noCompress "tflite"
-        ignoreAssetsPattern "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
-    }
 
     // Dex optimizations
     dexOptions {
@@ -93,11 +81,6 @@ android {
     }
 
     // Lint optimizations
-    lintOptions {
-        checkReleaseBuilds false
-        abortOnError false
-        disable 'MissingTranslation'
-    }
 
     // Bundle optimizations
     bundle {
@@ -119,6 +102,15 @@ android {
             path file('src/main/cpp/CMakeLists.txt')
             version '3.22.1'
         }
+    }
+    androidResources {
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        noCompress 'tflite'
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        disable 'MissingTranslation'
     }
 }
 
