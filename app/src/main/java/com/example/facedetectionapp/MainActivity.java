@@ -13,6 +13,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.FrameLayout;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -122,7 +123,20 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initializeViews() {
-        previewView = findViewById(R.id.previewView);
+        // Handle PreviewView replacement - replace the placeholder View with actual PreviewView
+        View previewPlaceholder = findViewById(R.id.previewView);
+        ViewGroup parent = (ViewGroup) previewPlaceholder.getParent();
+        int index = parent.indexOfChild(previewPlaceholder);
+        ViewGroup.LayoutParams layoutParams = previewPlaceholder.getLayoutParams();
+        parent.removeView(previewPlaceholder);
+
+        // Create actual PreviewView
+        previewView = new PreviewView(this);
+        previewView.setId(R.id.previewView); // Keep the same ID
+        previewView.setLayoutParams(layoutParams);
+        parent.addView(previewView, index);
+
+        // Get other views normally
         faceCountText = findViewById(R.id.faceCountText);
         spoofWarningText = findViewById(R.id.spoofWarningText);
 
@@ -135,17 +149,28 @@ public class MainActivity extends AppCompatActivity {
         embeddingInfoText.setText("Embedding Analysis Ready");
 
         // Replace placeholder view with custom overlay
-        View placeholder = findViewById(R.id.overlay);
-        ViewGroup parent = (ViewGroup) placeholder.getParent();
-        int index = parent.indexOfChild(placeholder);
-        parent.removeView(placeholder);
+        View overlayPlaceholder = findViewById(R.id.overlay);
+        ViewGroup overlayParent = (ViewGroup) overlayPlaceholder.getParent();
+        int overlayIndex = overlayParent.indexOfChild(overlayPlaceholder);
+        ViewGroup.LayoutParams overlayLayoutParams = overlayPlaceholder.getLayoutParams();
+        overlayParent.removeView(overlayPlaceholder);
 
         overlayView = new FaceOverlayView(this, null);
-        overlayView.setLayoutParams(placeholder.getLayoutParams());
-        parent.addView(overlayView, index);
+        overlayView.setLayoutParams(overlayLayoutParams);
+        overlayParent.addView(overlayView, overlayIndex);
 
-        // Add embedding info to the main layout
-        LinearLayout mainLayout = (LinearLayout) parent;
+        // Add embedding info to the main layout (FrameLayout)
+        FrameLayout mainLayout = (FrameLayout) overlayParent;
+
+        // Create layout params for embedding info positioning
+        FrameLayout.LayoutParams embeddingParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        embeddingParams.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL;
+        embeddingParams.bottomMargin = 100; // Add some margin from bottom
+
+        embeddingInfoText.setLayoutParams(embeddingParams);
         mainLayout.addView(embeddingInfoText);
     }
 
@@ -252,16 +277,30 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Add buttons to layout
+        // Add buttons to layout with proper layout params
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f);
+        buttonParams.setMargins(4, 4, 4, 4);
+
+        testEmbeddingButton.setLayoutParams(buttonParams);
+        compareSampleButton.setLayoutParams(buttonParams);
+        toggleModeButton.setLayoutParams(buttonParams);
+
         controlsLayout.addView(testEmbeddingButton);
         controlsLayout.addView(compareSampleButton);
         controlsLayout.addView(toggleModeButton);
 
-        // Add controls to main layout
-        ViewGroup mainLayout = findViewById(android.R.id.content);
-        if (mainLayout instanceof ViewGroup) {
-            ((ViewGroup) mainLayout).addView(controlsLayout);
-        }
+        // Add controls to main layout with proper positioning
+        FrameLayout mainLayout = findViewById(android.R.id.content);
+        FrameLayout.LayoutParams controlsParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        controlsParams.gravity = android.view.Gravity.BOTTOM;
+        controlsParams.bottomMargin = 20;
+
+        controlsLayout.setLayoutParams(controlsParams);
+        mainLayout.addView(controlsLayout);
     }
 
     // ========== EMBEDDING TEST METHODS ==========
@@ -462,6 +501,11 @@ public class MainActivity extends AppCompatActivity {
         // Stop all processing
         shouldProcess.set(false);
         stopPeriodicCacheCheck();
+
+        // Clean up embedding integration
+        if (embeddingIntegration != null) {
+            embeddingIntegration.close();
+        }
 
         // Clean up background thread
         if (backgroundThread != null) {
@@ -860,7 +904,8 @@ public class MainActivity extends AppCompatActivity {
                                     enhancedData.isReal,
                                     enhancedData.confidence,
                                     displayMethod,
-                                    enhancedData.has3DStructure
+                                    enhancedData.has3DStructure,
+                                    enhancedData.getRecognizedName() // Add identity
                             ));
                         }
                     }
@@ -997,6 +1042,7 @@ public class MainActivity extends AppCompatActivity {
         public float confidence;
         public String detectionMethod;
         public boolean has3DStructure;
+        public String identity; // Add identity field for recognition
 
         public FaceData(Rect boundingBox, boolean isReal) {
             this.boundingBox = boundingBox;
@@ -1004,6 +1050,7 @@ public class MainActivity extends AppCompatActivity {
             this.confidence = 75.0f;
             this.detectionMethod = "ML";
             this.has3DStructure = false;
+            this.identity = null; // Initialize identity
         }
 
         public FaceData(Rect boundingBox, boolean isReal, float confidence, String detectionMethod, boolean has3DStructure) {
@@ -1012,6 +1059,17 @@ public class MainActivity extends AppCompatActivity {
             this.confidence = confidence;
             this.detectionMethod = detectionMethod;
             this.has3DStructure = has3DStructure;
+            this.identity = null; // Initialize identity
+        }
+
+        // Constructor with identity
+        public FaceData(Rect boundingBox, boolean isReal, float confidence, String detectionMethod, boolean has3DStructure, String identity) {
+            this.boundingBox = boundingBox;
+            this.isReal = isReal;
+            this.confidence = confidence;
+            this.detectionMethod = detectionMethod;
+            this.has3DStructure = has3DStructure;
+            this.identity = identity;
         }
     }
 }
