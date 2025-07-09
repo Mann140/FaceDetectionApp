@@ -54,41 +54,33 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+
+        // Enable incremental compilation
         incremental true
     }
 
     buildToolsVersion '35.0.0'
-
-    // Performance optimizations for packaging
     packagingOptions {
-        // Exclude unnecessary files
-        excludes += [
-                'META-INF/DEPENDENCIES',
-                'META-INF/LICENSE',
-                'META-INF/LICENSE.txt',
-                'META-INF/NOTICE',
-                'META-INF/NOTICE.txt',
-                'META-INF/ASL2.0',
-                'META-INF/*.kotlin_module'
-        ]
-
-        // Prevent duplicate library inclusion
-        pickFirst '**/libtensorflowlite_jni.so'
-        pickFirst '**/libtensorflowlite_gpu_jni.so'
+        jniLibs {
+            useLegacyPackaging false
+        }
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE', 'META-INF/NOTICE.txt', 'META-INF/ASL2.0', 'META-INF/*.kotlin_module']
+        }
     }
 
-    // IMPORTANT: Optimize .tflite files for FaceNet model
-    aaptOptions {
-        noCompress "tflite"
-        ignoreAssetsPattern "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
+    // Performance optimizations for packaging
+
+    // Optimize .tflite files
+
+    // Dex optimizations
+    dexOptions {
+        preDexLibraries true
+        maxProcessCount 4
+        javaMaxHeapSize "4g"
     }
 
     // Lint optimizations
-    lintOptions {
-        checkReleaseBuilds false
-        abortOnError false
-        disable 'MissingTranslation'
-    }
 
     // Bundle optimizations
     bundle {
@@ -102,50 +94,39 @@ android {
             enableSplit = true
         }
     }
+    androidResources {
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        noCompress 'tflite'
+    }
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        disable 'MissingTranslation'
+    }
 }
 
 dependencies {
-    // Core Android dependencies
     implementation libs.appcompat
     implementation libs.material
     implementation libs.activity
     implementation libs.constraintlayout
-    implementation libs.core.ktx
-
-    // Testing dependencies
+    implementation libs.litert.support.api
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core
+    implementation(libs.core.ktx)
+    implementation(libs.face.detection)
+    implementation(libs.camera.core)
+    implementation(libs.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation 'com.google.mlkit:face-detection:16.1.5'
 
-    // ML Kit for face detection
-    implementation libs.face.detection
+    implementation 'com.google.ai.edge.litert:litert:1.0.1'
+    implementation 'com.google.ai.edge.litert:litert-support-api:1.0.1'
 
-    // CameraX dependencies
-    implementation libs.camera.core
-    implementation libs.camera.camera2
-    implementation libs.androidx.camera.lifecycle
-    implementation libs.androidx.camera.view
-
-    // ========== TENSORFLOW LITE - COMPATIBLE VERSIONS ==========
-    // These specific versions are tested to work together
-    // Option 1: Standard TensorFlow Lite (recommended for compatibility)
-    implementation 'org.tensorflow:tensorflow-lite:2.13.0'
-    implementation 'org.tensorflow:tensorflow-lite-support:0.4.3'
-
-    // GPU support (optional - comment out if having issues)
-    implementation 'org.tensorflow:tensorflow-lite-gpu:2.13.0'
-    implementation 'org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.3'
-
-    // Alternative Option 2: If you prefer newer versions, use these:
-    // implementation 'org.tensorflow:tensorflow-lite:2.14.0'
-    // implementation 'org.tensorflow:tensorflow-lite-support:0.4.4'
-    // implementation 'org.tensorflow:tensorflow-lite-gpu:2.14.0'
-
-    // Alternative Option 3: Google's AI Edge LiteRT (newest, but may have compatibility issues)
-    // Uncomment these if you want to try the latest LiteRT instead
-    // implementation 'com.google.ai.edge.litert:litert:1.0.1'
-    // implementation 'com.google.ai.edge.litert:litert-support-api:1.0.1'
-    // implementation 'com.google.ai.edge.litert:litert-gpu:1.0.1'
+    // Performance monitoring (optional - remove if not needed)
+    // implementation 'androidx.benchmark:benchmark-common:1.2.4'
 }
 
 // Performance optimization tasks
@@ -158,51 +139,5 @@ android.applicationVariants.all { variant ->
         def date = new Date().format('yyyyMMdd')
 
         outputFileName = "${project}-${buildType}-v${version}-${date}.apk"
-    }
-}
-
-// Task to verify model files are included
-task verifyModelFiles {
-    doLast {
-        def assetsDir = file("src/main/assets")
-        def requiredModels = [
-                "facenet.tflite",
-                "FaceAntiSpoofing.tflite"
-        ]
-
-        println "Checking for required model files in: ${assetsDir.absolutePath}"
-
-        requiredModels.each { modelFile ->
-            def file = new File(assetsDir, modelFile)
-            if (file.exists()) {
-                println "✅ Found: ${modelFile} (${file.length()} bytes)"
-            } else {
-                println "❌ Missing: ${modelFile}"
-                println "   Please download and place in ${assetsDir.absolutePath}"
-                if (modelFile == "facenet.tflite") {
-                    println "   Download from: https://github.com/nyoki-mtl/keras-facenet"
-                }
-            }
-        }
-
-        // Check TensorFlow Lite compatibility
-        println "\nTensorFlow Lite Configuration:"
-        println "Using standard TensorFlow Lite 2.13.0 for maximum compatibility"
-        println "GPU support: Optional (can be disabled if issues occur)"
-    }
-}
-
-// Run model verification after build
-preBuild.dependsOn verifyModelFiles
-
-// Add configuration for debugging TensorFlow Lite issues
-task debugTensorFlowLite {
-    doLast {
-        println "========== TensorFlow Lite Debug Info =========="
-        println "If you encounter GPU delegate issues:"
-        println "1. Use the simplified FaceNetModel (CPU-only version)"
-        println "2. Or disable GPU in MainActivity: USE_GPU = false"
-        println "3. Or remove GPU dependencies from build.gradle"
-        println "================================================="
     }
 }
